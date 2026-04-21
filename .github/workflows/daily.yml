@@ -1,0 +1,96 @@
+name: Daily CVM Pipeline
+
+on:
+  schedule:
+    # Runs at 22:00 UTC on days 1–12 of every month
+    - cron: '0 22 1-12 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # required for the auto-commit step
+
+jobs:
+  # ─────────────────────────────────────────────
+  # 1. Security gate – must pass before pipeline runs
+  # ─────────────────────────────────────────────
+  security:
+    name: Security Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install security tools
+        run: pip install pip-audit
+
+      - name: Audit dependencies for known CVEs
+        run: pip-audit -r requirements.txt --progress-spinner off
+
+      - name: Scan source for hardcoded credentials
+        # Matches assignment of real values to sensitive variable names.
+        # Skips env-var lookups (os.environ / os.getenv / secrets.*).
+        run: |
+          echo "Scanning for hardcoded secrets..."
+          PATTERN='(password|token|secret|api_key|bot_token|chat_id)\s*=\s*["\x27][A-Za-z0-9+/=_\-]{8,}'
+          EXCLUDE='(os\.environ|os\.getenv|getenv|secrets\.|\.env|#)'
+          MATCHES=$(grep -rniE "$PATTERN" --include="*.py" . \
+            | grep -viE "$EXCLUDE" || true)
+          if [ -n "$MATCHES" ]; then
+            echo "::error::Possible hardcoded credentials detected:"
+            echo "$MATCHES"
+            exit 1
+          fi
+          echo "No hardcoded credentials found."
+
+  # ─────────────────────────────────────────────
+  # 2. Pipeline – downloads, processes, alerts, reports
+  # ─────────────────────────────────────────────
+  pipeline:
+    name: Run CVM Pipeline
+    needs: security
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so git diff works correctly
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pipeline
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python br_stock_trading.py
+
+      # Commit only datasets/ and reports/; .cache/ is excluded by .gitignore
+      - name: Commit updated data
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add datasets/ reports/
+
+          # Only commit when something actually changed
+          if ! git diff --cached --quiet; then
+            TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M UTC')
+            git commit -m "chore: auto-update datasets and reports [$TIMESTAMP]"
+            git push
+            echo "Changes committed and pushed."
+          else
+            echo "No changes to commit."
+          fi

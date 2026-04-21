@@ -1,0 +1,18 @@
+# Empresas monitoradas para alertas P3
+# Usar substrings do Company_Name (case-insensitive). Não precisa ser o nome completo.
+companies:
+  - "ITAÚ UNIBANCO"
+  - "BANCO BRADESCO"
+  - "VALE"
+  - "PETROBRAS"
+  - "AMBEV"
+  - "MAGAZINE LUIZA"
+  - "WEG"
+  - "TOTVS"
+  - "LOCALIZA"
+  - "RAIA DROGASIL"
+  - "SUZANO"
+  - "GERDAU"
+  - "EMBRAER"
+  - "HAPVIDA"
+  - "REDE D'OR"

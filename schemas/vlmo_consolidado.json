@@ -1,0 +1,23 @@
+{
+  "description": "Layout esperado do arquivo VLMO consolidado da CVM (CIA_ABERTA/DOC/VLMO/DADOS/*_con_*.csv)",
+  "source": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/VLMO/DADOS/",
+  "required_columns": [
+    "CNPJ_Companhia",
+    "Nome_Companhia",
+    "Data_Referencia",
+    "Versao",
+    "Tipo_Empresa",
+    "Empresa",
+    "Tipo_Cargo",
+    "Tipo_Movimentacao",
+    "Descricao_Movimentacao",
+    "Tipo_Operacao",
+    "Tipo_Ativo",
+    "Caracteristica_Valor_Mobiliario",
+    "Intermediario",
+    "Data_Movimentacao",
+    "Quantidade",
+    "Preco_Unitario",
+    "Volume"
+  ]
+}
