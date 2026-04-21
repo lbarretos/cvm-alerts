@@ -13,6 +13,7 @@ companies:
   - "VAMOS"              # VAMO3
   - "SIMPAR"             # SIMH3
   - "MOTIVA"             # MOTV3
+  - "PRINER"             # PRNR3
 
   # ── Logística / Transporte / Infraestrutura ──────────────────────────────
   - "JSL"                # JSLG3
@@ -20,6 +21,7 @@ companies:
   - "HIDROVIAS"          # HBSA3
   - "ECORODOVIAS"        # ECOR3
   - "TEGMA"              # TGMA3
+  - "AUTOMOB"            # AMOB3
 
   # ── Autopeças / Indústria ────────────────────────────────────────────────
   - "MARCOPOLO"          # POMO3 / POMO4
@@ -34,9 +36,8 @@ companies:
   - "INTELBRAS"          # INTB3
 
   # ── Aviação / Turismo ────────────────────────────────────────────────────
-  - "AZUL"               # AZUL4
-  - "GOL LINHAS"         # GOLL54
-  - "EMBRAER"            # EMBR3
+  - "AZUL"               # AZUL3
+  - "EMBRAER"            # EMBJ3
   - "CVC BRASIL"         # CVCB3
 
   # ── Saúde ────────────────────────────────────────────────────────────────
@@ -49,7 +50,7 @@ companies:
   - "QUALICORP"          # QUAL3
   - "ODONTOPREV"         # ODPV3
   - "DIAGNOSTICOS DA AMERICA"  # DASA3
-
+  - "KORA"               # KRSA3
   # ── Educação ─────────────────────────────────────────────────────────────
   - "YDUQS"              # YDUQ3
   - "ANIMA HOLDING"      # ANIM3
@@ -66,9 +67,3 @@ companies:
   - "JALLES MACHADO"     # JALL3
   - "COSAN"              # CSAN3
   - "SÃO MARTINHO"       # SMTO3
-
-  # ── Outros ───────────────────────────────────────────────────────────────
-  - "AUTOMOB"            # AMOB3
-  - "KORA"               # KRSA3
-  - "GRUPO MATEUS"       # MATD3
-  - "PRINER"             # PRNR3
