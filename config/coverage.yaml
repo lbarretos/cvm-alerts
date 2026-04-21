@@ -1,18 +1,74 @@
 # Empresas monitoradas para alertas P3
-# Usar substrings do Company_Name (case-insensitive). Não precisa ser o nome completo.
+# Substrings do Company_Name na base CVM (case-insensitive).
+# Tickers não-BZ foram ignorados (HK, GR, US, CI, etc.).
+# Empresas sem registro CVM358 encontrado: VVEO3 (Viveo), RAIZ4 (Raízen).
+
 companies:
-  - "ITAÚ UNIBANCO"
-  - "BANCO BRADESCO"
-  - "VALE"
-  - "PETROBRAS"
-  - "AMBEV"
-  - "MAGAZINE LUIZA"
-  - "WEG"
-  - "TOTVS"
-  - "LOCALIZA"
-  - "RAIA DROGASIL"
-  - "SUZANO"
-  - "GERDAU"
-  - "EMBRAER"
-  - "HAPVIDA"
-  - "REDE D'OR"
+  # ── Mobilidade / Aluguel de Veículos ────────────────────────────────────
+  - "ARMAC"              # ARML3
+  - "LOCALIZA"           # RENT3
+  - "MOVIDA"             # MOVI3
+  - "MILLS"              # MILS3
+  - "GPS PART"           # GGPS3
+  - "VAMOS"              # VAMO3
+  - "SIMPAR"             # SIMH3
+  - "MOTIVA"             # MOTV3
+
+  # ── Logística / Transporte / Infraestrutura ──────────────────────────────
+  - "JSL"                # JSLG3
+  - "RUMO"               # RAIL3
+  - "HIDROVIAS"          # HBSA3
+  - "ECORODOVIAS"        # ECOR3
+  - "TEGMA"              # TGMA3
+
+  # ── Autopeças / Indústria ────────────────────────────────────────────────
+  - "MARCOPOLO"          # POMO3 / POMO4
+  - "FRAS-LE"            # FRAS3
+  - "FRASLE"             # FRAS3 (nome alternativo pós-rebranding)
+  - "WEG"                # WEGE3
+  - "IOCHPE"             # MYPK3
+  - "TUPY"               # TUPY3
+  - "MAHLE METAL LEVE"   # LEVE3
+  - "RANDON"             # RAPT3 / RAPT4
+  - "KEPLER"             # KEPL3
+  - "INTELBRAS"          # INTB3
+
+  # ── Aviação / Turismo ────────────────────────────────────────────────────
+  - "AZUL"               # AZUL4
+  - "GOL LINHAS"         # GOLL54
+  - "EMBRAER"            # EMBR3
+  - "CVC BRASIL"         # CVCB3
+
+  # ── Saúde ────────────────────────────────────────────────────────────────
+  - "REDE D'OR"          # RDOR3
+  - "HAPVIDA"            # HAPV3
+  - "HYPERA"             # HYPE3
+  - "FLEURY"             # FLRY3
+  - "BLAU"               # BLAU3
+  - "ONCOCLINICAS"       # ONCO3
+  - "QUALICORP"          # QUAL3
+  - "ODONTOPREV"         # ODPV3
+  - "DIAGNOSTICOS DA AMERICA"  # DASA3
+
+  # ── Educação ─────────────────────────────────────────────────────────────
+  - "YDUQS"              # YDUQ3
+  - "ANIMA HOLDING"      # ANIM3
+  - "SER EDUCACIONAL"    # SEER3
+  - "COGNA"              # COGN3
+  - "CRUZEIRO DO SUL EDUCACIONAL"  # CSED3
+  - "VITRU"              # VTRU3
+
+  # ── Agronegócio ──────────────────────────────────────────────────────────
+  - "SLC AGRI"           # SLCE3
+  - "TRÊS TENTOS"        # TTEN3
+  - "VITTIA"             # VITT3
+  - "BOA SAFRA"          # SOJA3
+  - "JALLES MACHADO"     # JALL3
+  - "COSAN"              # CSAN3
+  - "SÃO MARTINHO"       # SMTO3
+
+  # ── Outros ───────────────────────────────────────────────────────────────
+  - "AUTOMOB"            # AMOB3
+  - "KORA"               # KRSA3
+  - "GRUPO MATEUS"       # MATD3
+  - "PRINER"             # PRNR3
