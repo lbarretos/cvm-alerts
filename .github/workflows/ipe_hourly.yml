@@ -4,8 +4,8 @@ on:
   schedule:
     # 06h, 09h, 12h, 18h BRT (09h, 12h, 15h, 21h UTC) — seg a sex
     - cron: '0 9,12,15,21 * * 1-5'
-    # 22h BRT = 01h UTC dia seguinte — seg a sex BRT = ter a sáb UTC
-    - cron: '0 1 * * 2-6'
+    # 20h59 BRT (23h59 UTC) — seg a sex
+    - cron: '59 23 * * 1-5'
   workflow_dispatch:
 
 permissions:
