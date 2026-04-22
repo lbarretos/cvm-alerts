@@ -69,15 +69,26 @@ def download_ipe_index(session, year: int) -> pd.DataFrame:
     resp = session.get(url, timeout=60)
     resp.raise_for_status()
 
+    _RENAMES = {
+        "CNPJ_Companhia": "CNPJ_CIA",
+        "Nome_Companhia":  "DENOM_CIA",
+        "Data_Entrega":    "DT_ENTREGA",
+        "Categoria":       "CATEG_DOC",
+        "Tipo":            "TIPO_DOC",
+        "Link_Download":   "LINK_DOC",
+    }
+
     with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
         csv_name = f"ipe_cia_aberta_{year}.csv"
         with zf.open(csv_name) as f:
             df = pd.read_csv(f, sep=";", encoding="latin-1", dtype=str)
 
+    df.rename(columns=_RENAMES, inplace=True)
+
     required = {"CNPJ_CIA", "DENOM_CIA", "DT_ENTREGA", "CATEG_DOC", "LINK_DOC"}
     missing_cols = required - set(df.columns)
     assert not missing_cols, (
-        f"IPE CSV missing expected columns: {missing_cols}. "
+        f"IPE CSV missing expected columns after rename: {missing_cols}. "
         f"Actual columns: {list(df.columns)}"
     )
     df["_cnpj_digits"] = df["CNPJ_CIA"].apply(_digits)
