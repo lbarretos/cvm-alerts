@@ -85,3 +85,13 @@ def send_alerts(alerts_df: pd.DataFrame) -> None:
 
         for msg in _chunk_messages(header, blocks, MSG_LIMIT):
             _send(token, chat_id, msg)
+
+
+def send_message(text: str) -> None:
+    """Send a single free-form Markdown message to the configured Telegram chat.
+
+    Truncates to MSG_LIMIT characters. Network errors are logged, not raised.
+    Raises KeyError if TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID are not set.
+    """
+    token, chat_id = _get_credentials()
+    _send(token, chat_id, text[:MSG_LIMIT])
