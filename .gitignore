@@ -6,6 +6,9 @@
 # Runtime cache (ETags + downloaded ZIPs — never commit)
 .cache/
 
+# Dedup state — persisted via GitHub Actions cache, not git
+datasets/ipe_processed_ids.json
+
 # Python
 __pycache__/
 *.py[cod]

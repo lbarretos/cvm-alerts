@@ -22,9 +22,19 @@ BLACKOUT_DAYS        = 30
 
 
 def load_coverage(config_path: str = 'config/coverage.yaml') -> List[str]:
-    """Load the list of monitored company name substrings from YAML."""
+    """Return CVM company-name substrings for all tickers in coverage.yaml."""
     with open(config_path) as f:
-        return yaml.safe_load(f)['companies']
+        cfg = yaml.safe_load(f)
+    ticker_map = cfg['ticker_map']
+    seen: set = set()
+    names: List[str] = []
+    for tickers in cfg['sectors'].values():
+        for ticker in tickers:
+            name = ticker_map.get(ticker)
+            if name and name not in seen:
+                seen.add(name)
+                names.append(name)
+    return names
 
 
 def _in_coverage(company_name: str, coverage: List[str]) -> bool:

@@ -1,69 +1,136 @@
-# Empresas monitoradas para alertas P3
-# Substrings do Company_Name na base CVM (case-insensitive).
-# Tickers não-BZ foram ignorados (HK, GR, US, CI, etc.).
-# Empresas sem registro CVM358 encontrado: VVEO3 (Viveo), RAIZ4 (Raízen).
+# Cobertura P3 — empresas monitoradas para qualquer movimentação de insider.
+#
+# Estrutura: setor → lista de tickers BZ.
+# ticker_map: mapeia cada ticker para o substring do Company_Name na base CVM
+# (case-insensitive). Usado pelo alerts.py para fazer o match.
+#
+# Sem registro CVM358 na base atual: VVEO3 (Viveo), RAIZ4 (Raízen).
 
-companies:
-  # ── Mobilidade / Aluguel de Veículos ────────────────────────────────────
-  - "ARMAC"              # ARML3
-  - "LOCALIZA"           # RENT3
-  - "MOVIDA"             # MOVI3
-  - "MILLS"              # MILS3
-  - "GPS PART"           # GGPS3
-  - "VAMOS"              # VAMO3
-  - "SIMPAR"             # SIMH3
-  - "MOTIVA"             # MOTV3
-  - "PRINER"             # PRNR3
+sectors:
+  mobility:
+    - ARML3   # Armac
+    - RENT3   # Localiza
+    - MOVI3   # Movida
+    - MILS3   # Mills
+    - GGPS3   # GPS Participações
+    - VAMO3   # Vamos
+    - SIMH3   # Simpar
+    - MOTV3   # Motiva
 
-  # ── Logística / Transporte / Infraestrutura ──────────────────────────────
-  - "JSL"                # JSLG3
-  - "RUMO"               # RAIL3
-  - "HIDROVIAS"          # HBSA3
-  - "ECORODOVIAS"        # ECOR3
-  - "TEGMA"              # TGMA3
-  - "AUTOMOB"            # AMOB3
+  logistics:
+    - JSLG3   # JSL
+    - RAIL3   # Rumo
+    - HBSA3   # Hidrovias do Brasil
+    - ECOR3   # EcoRodovias
+    - TGMA3   # Tegma
 
-  # ── Autopeças / Indústria ────────────────────────────────────────────────
-  - "MARCOPOLO"          # POMO3 / POMO4
-  - "FRAS-LE"            # FRAS3
-  - "FRASLE"             # FRAS3 (nome alternativo pós-rebranding)
-  - "WEG"                # WEGE3
-  - "IOCHPE"             # MYPK3
-  - "TUPY"               # TUPY3
-  - "MAHLE METAL LEVE"   # LEVE3
-  - "RANDON"             # RAPT3 / RAPT4
-  - "KEPLER"             # KEPL3
-  - "INTELBRAS"          # INTB3
+  auto_parts:
+    - POMO3   # Marcopolo ON
+    - POMO4   # Marcopolo PN
+    - FRAS3   # Fras-le
+    - WEGE3   # WEG
+    - MYPK3   # Iochpe-Maxion
+    - TUPY3   # Tupy
+    - LEVE3   # Metal Leve
+    - RAPT3   # Randon ON
+    - RAPT4   # Randon PN
+    - KEPL3   # Kepler Weber
+    - INTB3   # Intelbras
 
-  # ── Aviação / Turismo ────────────────────────────────────────────────────
-  - "AZUL"               # AZUL3
-  - "EMBRAER"            # EMBJ3
-  - "CVC BRASIL"         # CVCB3
+  airlines:
+    - AZUL4   # Azul
+    - GOLL4   # Gol
+    - EMBR3   # Embraer
+    - CVCB3   # CVC Brasil
 
-  # ── Saúde ────────────────────────────────────────────────────────────────
-  - "REDE D'OR"          # RDOR3
-  - "HAPVIDA"            # HAPV3
-  - "HYPERA"             # HYPE3
-  - "FLEURY"             # FLRY3
-  - "BLAU"               # BLAU3
-  - "ONCOCLINICAS"       # ONCO3
-  - "QUALICORP"          # QUAL3
-  - "ODONTOPREV"         # ODPV3
-  - "DIAGNOSTICOS DA AMERICA"  # DASA3
-  - "KORA"               # KRSA3
-  # ── Educação ─────────────────────────────────────────────────────────────
-  - "YDUQS"              # YDUQ3
-  - "ANIMA HOLDING"      # ANIM3
-  - "SER EDUCACIONAL"    # SEER3
-  - "COGNA"              # COGN3
-  - "CRUZEIRO DO SUL EDUCACIONAL"  # CSED3
-  - "VITRU"              # VTRU3
+  healthcare:
+    - RDOR3   # Rede D'Or
+    - HAPV3   # Hapvida
+    - HYPE3   # Hypera
+    - FLRY3   # Fleury
+    - BLAU3   # Blau
+    - ONCO3   # Oncoclínicas
+    - QUAL3   # Qualicorp
+    - ODPV3   # Odontoprev
+    - DASA3   # Dasa
+    - KRSA3   # Kora Saúde
 
-  # ── Agronegócio ──────────────────────────────────────────────────────────
-  - "SLC AGRI"           # SLCE3
-  - "TRÊS TENTOS"        # TTEN3
-  - "VITTIA"             # VITT3
-  - "BOA SAFRA"          # SOJA3
-  - "JALLES MACHADO"     # JALL3
-  - "COSAN"              # CSAN3
-  - "SÃO MARTINHO"       # SMTO3
+  education:
+    - YDUQ3   # Yduqs
+    - ANIM3   # Ânima
+    - SEER3   # Ser Educacional
+    - COGN3   # Cogna
+    - CSED3   # Cruzeiro do Sul
+    - VTRU3   # Vitru
+
+  agro:
+    - SLCE3   # SLC Agrícola
+    - TTEN3   # 3Tentos
+    - VITT3   # Vittia
+    - SOJA3   # Boa Safra
+    - SMTO3   # São Martinho
+    - JALL3   # Jalles Machado
+    - CSAN3   # Cosan
+
+  other:
+    - MATD3   # Grupo Mateus
+    - PRNR3   # Priner
+    - AMOB3   # Automob
+
+# ── Mapeamento ticker → substring do Company_Name na base CVM ────────────────
+# Usado por alerts.load_coverage() para fazer o match no DataFrame.
+ticker_map:
+  ARML3: "ARMAC"
+  RENT3: "LOCALIZA"
+  MOVI3: "MOVIDA"
+  MILS3: "MILLS"
+  GGPS3: "GPS PART"
+  VAMO3: "VAMOS"
+  SIMH3: "SIMPAR"
+  MOTV3: "MOTIVA"
+  JSLG3: "JSL"
+  RAIL3: "RUMO"
+  HBSA3: "HIDROVIAS"
+  ECOR3: "ECORODOVIAS"
+  TGMA3: "TEGMA"
+  POMO3: "MARCOPOLO"
+  POMO4: "MARCOPOLO"
+  FRAS3: "FRAS-LE"
+  WEGE3: "WEG"
+  MYPK3: "IOCHPE"
+  TUPY3: "TUPY"
+  LEVE3: "MAHLE METAL LEVE"
+  RAPT3: "RANDON"
+  RAPT4: "RANDON"
+  KEPL3: "KEPLER"
+  INTB3: "INTELBRAS"
+  AZUL4: "AZUL"
+  GOLL4: "GOL LINHAS"
+  EMBR3: "EMBRAER"
+  CVCB3: "CVC BRASIL"
+  RDOR3: "REDE D'OR"
+  HAPV3: "HAPVIDA"
+  HYPE3: "HYPERA"
+  FLRY3: "FLEURY"
+  BLAU3: "BLAU"
+  ONCO3: "ONCOCLINICAS"
+  QUAL3: "QUALICORP"
+  ODPV3: "ODONTOPREV"
+  DASA3: "DIAGNOSTICOS DA AMERICA"
+  KRSA3: "KORA"
+  YDUQ3: "YDUQS"
+  ANIM3: "ANIMA HOLDING"
+  SEER3: "SER EDUCACIONAL"
+  COGN3: "COGNA"
+  CSED3: "CRUZEIRO DO SUL EDUCACIONAL"
+  VTRU3: "VITRU"
+  SLCE3: "SLC AGRI"
+  TTEN3: "TRÊS TENTOS"
+  VITT3: "VITTIA"
+  SOJA3: "BOA SAFRA"
+  SMTO3: "SÃO MARTINHO"
+  JALL3: "JALLES MACHADO"
+  CSAN3: "COSAN"
+  MATD3: "GRUPO MATEUS"
+  PRNR3: "PRINER"
+  AMOB3: "AUTOMOB"

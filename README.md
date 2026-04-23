@@ -1,231 +1,121 @@
-# CVM358 - Brazilian Insider Trading Data Extractor
+# CVM Alerts — Monitoramento de Fatos Relevantes em Tempo Real
 
-## 📊 Overview
+Monitor Fatos Relevantes (FRs) e Comunicados ao Mercado de empresas brasileiras via API da B3/CVM. Recebe alertas via Telegram com análise automática via LLM.
 
-This project extracts and processes Brazilian insider trading data from the CVM (Comissão de Valores Mobiliários) website, specifically focusing on the CVM358 dataset. CVM358 refers to CVM Instruction 358/02, which regulates the disclosure of insider trading and related-party transactions in the Brazilian market.
+## 🚀 Início Rápido
 
-## 🎯 Purpose
-
-CVM358 is crucial for market transparency and corporate governance in Brazil. This tool helps stakeholders to:
-
-- Monitor insider trading activities
-- Track related-party transactions
-- Ensure compliance with regulatory requirements
-- Analyze trading patterns of company insiders
-- Support corporate governance analysis
-- Enable regulatory reporting and compliance
-
-## 📈 Data Context
-
-### What We're Tracking
-
-The data includes detailed information about insider trading and related-party transactions from consolidated reports:
-
-1. **Insider Trading Data**
-   - Transactions by company executives
-   - Board members' trading activities
-   - Fiscal council members' transactions
-   - Technical/consultative body members' trades
-
-2. **Related-Party Information**
-   - Transactions by controlling shareholders
-   - Trading by related individuals (spouses, partners)
-   - Transactions by dependent family members
-   - Trading by controlled companies
-
-3. **Transaction Details**
-   - Trading dates and volumes
-   - Security types (stocks, derivatives)
-   - Transaction values
-   - Related company information
-
-### Why It Matters
-
-This data is essential for:
-
-- **Regulators**: Monitor compliance with CVM358 requirements
-- **Investors**: Assess corporate governance practices
-- **Companies**: Ensure regulatory compliance
-- **Analysts**: Study insider trading patterns
-- **Researchers**: Analyze market transparency
-
-## 🌟 Features
-
-### Data Extraction
-- Parallel downloads of ZIP files using ThreadPoolExecutor
-- Automatic handling of multiple file versions
-- Focus on consolidated trading data
-- Robust error handling and retry mechanisms
-- SSL/TLS compatibility for secure downloads
-
-### Data Processing
-- Automatic date format conversion
-- Version control for data entries
-- Deduplication of records
-- Standardized column naming
-- Support for Brazilian Portuguese character encoding
-
-### Data Storage
-- Organized dataset directory structure
-- Automatic backup system with timestamps
-- Historical data preservation (last 5 versions)
-- Clean separation of current and historical data
-
-### Reporting System
-- Modern HTML reports with responsive design
-- Real-time console logging with color coding
-- Detailed execution metrics and timing information
-- Historical report tracking
-- Performance statistics
-- Monthly company reporting list
-
-## 📊 Generated Files
-
-### Datasets
-- `datasets/Brazil_Stock_Trading_Consolidated.csv`: Latest consolidated insider trading data
-- `datasets/history/`: Historical backups with timestamps
-
-### Reports
-- `reports/latest_report.html`: Current execution report
-- `reports/history/`: Historical reports with timestamps
-- `reports/run_history.json`: Execution history and statistics
-
-## 🚀 Performance
-
-- Parallel downloads: 4 concurrent downloads
-- Typical execution times:
-  - Download: ~1-2 seconds
-  - Processing: ~0.7 seconds
-  - Total execution: ~2-3 seconds
-
-## 📋 Requirements
+### 1. Clonar e Configurar
 
 ```bash
+git clone https://github.com/lbarretos/cvm-alerts.git
+cd cvm-alerts
 pip install -r requirements.txt
 ```
 
-## 🛠️ Usage
+### 2. Adicionar Credenciais (GitHub Secrets)
 
-```bash
-python br_stock_trading.py
+Vá para **Settings → Secrets and variables → Actions** e adicione:
+
+| Secret | Valor | Onde Obter |
+|--------|-------|-----------|
+| `CVM_USERNAME` | Login CVM | Solicite em [conteudo.cvm.gov.br](https://conteudo.cvm.gov.br/menu/regulados/companhias/download_multiplo/) |
+| `CVM_PASSWORD` | Senha CVM | Mesmo email da solicitação |
+| `TELEGRAM_BOT_TOKEN` | Token do bot Telegram | `@BotFather` no Telegram |
+| `TELEGRAM_CHAT_ID` | ID do chat | `@userinfobot` no Telegram |
+| `DEEPSEEK_API_KEY` | API key Deepseek | [platform.deepseek.com](https://platform.deepseek.com) |
+
+### 3. Customizar Empresas Monitoradas
+
+Edite `config/cnpj_map.yaml` — apenas as empresas listadas geram alertas.
+
+**Exemplo:** para monitorar só AZUL4 e GOLL4:
+
+```yaml
+tickers:
+  AZUL4: {cnpj: "09.305.994/0001-29", ccvm: "24112", denom: "AZUL S.A."}
+  GOLL4: {cnpj: "06.164.253/0001-87", ccvm: "19569", denom: "GOL LINHAS AEREAS INTELIGENTES SA"}
 ```
 
-## 📈 Output
+### 4. Disparar Workflow
 
-The script generates:
+Vá para **Actions → IPE Hourly Watcher → Run workflow**.
 
-1. **Processed Datasets**
-   - Consolidated insider trading data
-   - Automatic backups with timestamps
+Ou espere os horários automáticos:
+- **06h00, 09h00, 12h00, 18h00, 20h59 BRT** (seg–sex)
 
-2. **HTML Reports**
-   - Run information
-   - Latest data available
-   - Total records processed
-   - New records since last run
-   - Unique companies count
-   - List of companies that reported in the latest month
+## 📊 O Que Você Recebe
 
-3. **Console Output**
-   - Progress indicators
-   - Performance metrics
-   - Error messages (if any)
-   - Success confirmation
+- **Fato Relevante (FR)**: Sempre alerta
+- **Comunicado ao Mercado**: Sempre alerta
+- **Resumo automático**: LLM analisa e extrai pontos-chave
+- **Link do PDF**: Documento original da CVM
+- **Telegram**: Notificação em tempo real
 
-## 🔄 Backup System
-
-- Maintains the last 5 versions of each dataset
-- Timestamps in format: YYYYMMDD_HHMMSS
-- Automatic cleanup of older versions
-- Easy rollback capability
-
-## 📊 Report Features
-
-- Modern, responsive design
-- Clear metrics visualization
-- Color-coded sections
-- Mobile-friendly layout
-- Historical tracking
-- Monthly company reporting list with CNPJ information
-
-## 🛡️ Error Handling
-
-- Robust download retry mechanism
-- Graceful failure recovery
-- Detailed error logging
-- Data integrity checks
-
-## 🔒 Security
-
-- HTTPS support
-- SSL/TLS compatibility
-- Secure file handling
-- Clean temporary files
-
-## 📝 Logging
-
-- Color-coded console output
-- Detailed progress tracking
-- Performance metrics
-- Error reporting
-
-## 🗂️ Project Structure
+## 🔧 Estrutura
 
 ```
 .
-├── br_stock_trading.py    # Main script
-├── requirements.txt       # Dependencies
-├── datasets/             # Data storage
-│   ├── *.csv            # Current datasets
-│   └── history/         # Historical backups
-├── reports/             # Report storage
-│   ├── latest_report.html   # Current report
-│   ├── history/            # Historical reports
-│   └── report_generator.py # Report generation logic
-└── README.md            # Documentation
+├── ipe_watcher.py              # Script principal
+├── config/
+│   ├── cnpj_map.yaml          # Empresas monitoradas (customize aqui)
+│   └── system_prompt_ipe.txt   # Prompt do LLM (customize se quiser)
+├── datasets/
+│   ├── ipe_processed_ids.json  # Cache de dedup (GitHub Actions)
+│   └── ipe_skipped_log.csv     # Log de docs excluídos
+└── .github/workflows/
+    └── ipe_hourly.yml         # Agendamento automático
 ```
 
-## 📚 Use Cases
+## 🛠️ Customizações
 
-### Compliance Monitoring
-- Track insider trading compliance
-- Monitor related-party transactions
-- Ensure regulatory reporting
-- Audit trail maintenance
+### Mudar Intervalo de Execução
 
-### Corporate Governance
-- Analyze insider trading patterns
-- Assess board member activities
-- Monitor controlling shareholders
-- Evaluate transparency practices
+Edite `.github/workflows/ipe_hourly.yml`:
 
-### Market Analysis
-- Study insider trading trends
-- Analyze related-party transactions
-- Assess market transparency
-- Monitor regulatory compliance
+```yaml
+schedule:
+  - cron: '0 9,15 * * 1-5'  # 09h e 15h UTC, seg-sex
+```
 
-### Research
-- Academic studies on insider trading
-- Corporate governance research
-- Market transparency analysis
-- Regulatory impact studies
+Veja [crontab.guru](https://crontab.guru) para converter.
 
-## 🤝 Contributing
+### Mudar Critério de Filtro
 
-Feel free to submit issues and enhancement requests! We welcome contributions that help make this tool more valuable for monitoring CVM358 compliance and market transparency.
+Edite `config/system_prompt_ipe.txt` para ajustar o que o LLM considera importante.
 
-## 📜 License
+### Adicionar Notificação Extra
 
-[MIT License](LICENSE)
+Edite `ipe_watcher.py` linha ~268 (`send_notification`) para adicionar Slack, Discord, etc.
 
-## 🙏 Acknowledgments
+## ⚠️ Requisitos
 
-- CVM for providing the CVM358 data
-- B3 (Brazilian Stock Exchange) for market infrastructure
-- Contributors and maintainers
-- Brazilian financial market community
+- **Python 3.11+**
+- **Conta CVM** com acesso à API Multiple Download
+- **Telegram Bot** (criar com `@BotFather`)
+- **Deepseek API** (free tier funciona)
 
-## 📬 Contact
+## 📝 Logs e Debugging
 
-For questions, suggestions, or collaboration opportunities, please open an issue or submit a pull request. 
+Veja os logs no GitHub Actions:
+1. **Actions → IPE Hourly Watcher → seu run**
+2. **Run IPE watcher** → expanda para ver output
+
+Localmente:
+```bash
+python ipe_watcher.py  # roda uma vez com env vars setadas
+```
+
+## 🔒 Segurança
+
+- ✅ Credenciais em secrets, não no repo
+- ✅ Dedup automático (não reprocessa documentos)
+- ✅ Cache privado via GitHub Actions
+- ✅ Repo público é seguro (secrets mascarados nos logs)
+
+## 📚 Documentação
+
+Veja `CLAUDE.md` para ajuda de desenvolvimento e customizações avançadas.
+
+---
+
+**Precisa ajuda?** Abra uma issue no GitHub.
