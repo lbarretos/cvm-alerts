@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # required for git push commit-back
+  contents: write   # required for git push of ipe_skipped_log.csv
 
 jobs:
   ipe-watcher:
@@ -21,6 +21,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0   # full history so git push works correctly
+
+      - name: Restore processed IDs cache
+        uses: actions/cache/restore@v4
+        with:
+          path: datasets/ipe_processed_ids.json
+          key: ipe-processed-ids-${{ github.run_id }}
+          restore-keys: ipe-processed-ids-
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -36,4 +43,13 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
           DEEPSEEK_API_KEY:   ${{ secrets.DEEPSEEK_API_KEY }}
+          CVM_USERNAME:       ${{ secrets.CVM_USERNAME }}
+          CVM_PASSWORD:       ${{ secrets.CVM_PASSWORD }}
         run: python ipe_watcher.py
+
+      - name: Save processed IDs cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: datasets/ipe_processed_ids.json
+          key: ipe-processed-ids-${{ github.run_id }}

@@ -12,6 +12,7 @@ import re
 import subprocess
 import time
 import zipfile
+import xml.etree.ElementTree as ET
 from datetime import datetime, date
 from pathlib import Path
 
@@ -33,7 +34,7 @@ INDEX_LATEST_FILE  = Path("datasets/ipe_index_latest.csv")
 CNPJ_MAP_FILE      = Path("config/cnpj_map.yaml")
 SYSTEM_PROMPT_FILE = Path("config/system_prompt_ipe.txt")
 
-CVM_BASE   = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/"
+B3_API_URL = "https://seguro.bmfbovespa.com.br/rad/download/SolicitaDownload.asp"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -53,45 +54,88 @@ def _digits(cnpj: str) -> str:
     return re.sub(r"\D", "", str(cnpj))
 
 
-def load_cnpj_map() -> set[str]:
-    """Return set of normalised (digits-only) CNPJs from config/cnpj_map.yaml."""
+def load_company_map() -> dict[str, dict]:
+    """Return dict ccvm → {cnpj, cnpj_digits, denom, ticker} from config/cnpj_map.yaml."""
     with open(CNPJ_MAP_FILE, encoding="utf-8") as f:
         data = yaml.safe_load(f)
-    return {_digits(v) for v in data.get("tickers", {}).values() if v}
+    result = {}
+    for ticker, info in data.get("tickers", {}).items():
+        ccvm = str(info["ccvm"])
+        cnpj = info["cnpj"]
+        result[ccvm] = {
+            "ticker":      ticker,
+            "cnpj":        cnpj,
+            "cnpj_digits": _digits(cnpj),
+            "denom":       info["denom"],
+        }
+    return result
 
 
-# ── Index download ─────────────────────────────────────────────────────────────
+# ── B3 API index download ──────────────────────────────────────────────────────
 
-def download_ipe_index(session, year: int) -> pd.DataFrame:
-    """Download the annual IPE index ZIP and return its CSV as a DataFrame."""
-    url = f"{CVM_BASE}ipe_cia_aberta_{year}.zip"
-    logger.info("Downloading IPE index: %s", url)
-    resp = session.get(url, timeout=60)
+def _parse_dataref(dataref: str) -> str:
+    """Convert B3 DataRef 'dd/mm/yyyy hh:mm:ss' to ISO 'yyyy-mm-dd'."""
+    try:
+        return datetime.strptime(dataref[:10], "%d/%m/%Y").strftime("%Y-%m-%d")
+    except ValueError:
+        return dataref
+
+
+def download_ipe_b3(session, query_date: date) -> pd.DataFrame:
+    """Query B3 Multiple Download API for IPE filings on query_date.
+
+    Returns DataFrame with same schema as the old download_ipe_index():
+    CNPJ_CIA, DENOM_CIA, DT_ENTREGA, CATEG_DOC, TIPO_DOC, LINK_DOC, ASSUNTO, _cnpj_digits
+    """
+    login = os.environ.get("CVM_USERNAME", "")
+    senha = os.environ.get("CVM_PASSWORD", "")
+    if not login or not senha:
+        raise EnvironmentError("CVM_USERNAME and CVM_PASSWORD environment variables must be set")
+
+    date_str = query_date.strftime("%d/%m/%Y")
+    logger.info("Querying B3 API for IPE filings on %s", date_str)
+
+    payload = {
+        "txtLogin":      login,
+        "txtSenha":      senha,
+        "txtData":       date_str,
+        "txtHora":       "00:00",
+        "txtDocumento":  "IPE",
+        "txtAssuntoIPE": "SIM",
+    }
+    resp = session.post(B3_API_URL, data=payload, timeout=60)
     resp.raise_for_status()
 
-    _RENAMES = {
-        "CNPJ_Companhia": "CNPJ_CIA",
-        "Nome_Companhia":  "DENOM_CIA",
-        "Data_Entrega":    "DT_ENTREGA",
-        "Categoria":       "CATEG_DOC",
-        "Tipo":            "TIPO_DOC",
-        "Link_Download":   "LINK_DOC",
-    }
+    # Response is ISO-8859-1 encoded XML
+    root = ET.fromstring(resp.content.decode("iso-8859-1"))
 
-    with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-        csv_name = f"ipe_cia_aberta_{year}.csv"
-        with zf.open(csv_name) as f:
-            df = pd.read_csv(f, sep=";", encoding="latin-1", dtype=str)
+    if root.tag == "ERROS":
+        code = root.findtext("NUMERO_DO_ERRO", "")
+        desc = root.findtext("DESCRICAO_DO_ERRO", "")
+        raise RuntimeError(f"B3 API error {code}: {desc}")
 
-    df.rename(columns=_RENAMES, inplace=True)
+    rows = []
+    for link in root.findall("Link"):
+        rows.append({
+            "ccvm":     link.get("ccvm", ""),
+            "DT_ENTREGA": _parse_dataref(link.get("DataRef", "")),
+            "CATEG_DOC":  link.get("Categoria", ""),
+            "TIPO_DOC":   link.get("Tipo", ""),
+            "LINK_DOC":   link.get("url", ""),
+            "ASSUNTO":    link.get("Especie", ""),
+            "Situacao":   link.get("Situacao", ""),
+        })
 
-    required = {"CNPJ_CIA", "DENOM_CIA", "DT_ENTREGA", "CATEG_DOC", "LINK_DOC"}
-    missing_cols = required - set(df.columns)
-    assert not missing_cols, (
-        f"IPE CSV missing expected columns after rename: {missing_cols}. "
-        f"Actual columns: {list(df.columns)}"
-    )
-    df["_cnpj_digits"] = df["CNPJ_CIA"].apply(_digits)
+    logger.info("B3 API returned %d IPE records for %s", len(rows), date_str)
+
+    if not rows:
+        return pd.DataFrame(columns=["CNPJ_CIA","DENOM_CIA","DT_ENTREGA","CATEG_DOC","TIPO_DOC","LINK_DOC","ASSUNTO","_cnpj_digits"])
+
+    df = pd.DataFrame(rows)
+
+    # Drop cancelled documents
+    df = df[df["Situacao"] == "Liberado"].copy()
+
     return df
 
 
@@ -271,8 +315,8 @@ def send_notification(row: pd.Series, summary: str | None) -> None:
 # ── Git commit-back ───────────────────────────────────────────────────────────
 
 def git_commit_back() -> None:
-    """Commit ipe_processed_ids.json and ipe_skipped_log.csv back to the repo."""
-    files = [str(PROCESSED_IDS_FILE), str(SKIPPED_LOG_FILE)]
+    """Commit ipe_skipped_log.csv back to the repo."""
+    files = [str(SKIPPED_LOG_FILE)]
     existing = [f for f in files if Path(f).exists()]
     if not existing:
         return
@@ -299,25 +343,31 @@ def git_commit_back() -> None:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    session     = create_session()
-    cnpjs       = load_cnpj_map()
-    processed   = load_processed_ids()
-    year        = date.today().year
-    today_str   = date.today().isoformat()
-    new_records = []
+    session      = create_session()
+    company_map  = load_company_map()
+    watched_ccvm = set(company_map.keys())
+    processed    = load_processed_ids()
+    today        = date.today()
+    today_str    = today.isoformat()
+    new_records  = []
 
     try:
-        df = download_ipe_index(session, year)
+        df = download_ipe_b3(session, today)
     except Exception as exc:
-        logger.error("Failed to download IPE index: %s", exc)
+        logger.error("Failed to query B3 API: %s", exc)
         return
 
-    # Filter: category + CNPJ
+    # Filter: watched companies (by ccvm) + relevant categories
+    df = df[df["ccvm"].isin(watched_ccvm)]
     df = df[df["CATEG_DOC"].isin(CATEGORIES)]
-    df = df[df["_cnpj_digits"].isin(cnpjs)]
-    logger.info("%d rows after category+CNPJ filter", len(df))
+    logger.info("%d rows after category+ccvm filter", len(df))
 
-    # Filter: today's filings only
+    # Enrich with CNPJ and company name from local map
+    df["CNPJ_CIA"]    = df["ccvm"].map(lambda c: company_map[c]["cnpj"])
+    df["DENOM_CIA"]   = df["ccvm"].map(lambda c: company_map[c]["denom"])
+    df["_cnpj_digits"] = df["ccvm"].map(lambda c: company_map[c]["cnpj_digits"])
+
+    # B3 API already filters by date, but guard against edge cases
     df = df[df["DT_ENTREGA"].str.startswith(today_str, na=False)]
     logger.info("%d rows for today (%s)", len(df), today_str)
 

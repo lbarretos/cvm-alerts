@@ -1,5 +1,4 @@
 import io
-import zipfile
 import json
 from datetime import date
 from unittest.mock import MagicMock, patch
@@ -8,39 +7,73 @@ import pandas as pd
 import pytest
 
 
-def _make_zip_with_csv(csv_text: str, year: int) -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr(f"ipe_cia_aberta_{year}.csv", csv_text.encode("latin-1"))
-    return buf.getvalue()
+SAMPLE_B3_XML = b"""<?xml version="1.0" encoding="ISO-8859-1" ?>
+<DownloadMultiplo DataSolicitada="22/04/2026 00:00" TipoDocumento="IPE" DataConsulta="22/04/2026 10:00">
+  <Link url="http://example.com/doc1.pdf"
+        Documento="IPE" ccvm="24392"
+        DataRef="22/04/2026 09:00:00" FrmDtRef="22/04/2026 09:00"
+        Categoria="Fato Relevante" Tipo="Fato Relevante"
+        Especie="Acordo operacional" Situacao="Liberado" />
+  <Link url="http://example.com/doc2.pdf"
+        Documento="IPE" ccvm="99999"
+        DataRef="22/04/2026 09:00:00" FrmDtRef="22/04/2026 09:00"
+        Categoria="Fato Relevante" Tipo="Fato Relevante"
+        Especie="Outro fato" Situacao="Liberado" />
+</DownloadMultiplo>
+"""
 
 
-SAMPLE_CSV = (
-    "CNPJ_CIA;DENOM_CIA;DT_REFER;DT_ENTREGA;CATEG_DOC;TIPO_DOC;ASSUNTO;LINK_DOC\n"
-    "00.494.205/0001-31;HAPVIDA;2026-04-22;2026-04-22;"
-    "Fato Relevante;Fato Relevante;Acordo operacional;http://example.com/doc1.pdf\n"
-    "99.999.999/0001-00;OTHER CO;2026-04-22;2026-04-22;"
-    "Fato Relevante;Fato Relevante;Outro fato;http://example.com/doc2.pdf\n"
-)
+# ── Task 6: download_ipe_b3 ───────────────────────────────────────────────────
 
-
-# ── Task 6: download_ipe_index ────────────────────────────────────────────────
-
-def test_download_ipe_index_returns_dataframe():
+def test_download_ipe_b3_returns_dataframe(monkeypatch):
     import ipe_watcher
-    zip_bytes = _make_zip_with_csv(SAMPLE_CSV, 2026)
+    monkeypatch.setenv("CVM_USERNAME", "testuser")
+    monkeypatch.setenv("CVM_PASSWORD", "testpass")
+
     mock_resp = MagicMock()
-    mock_resp.content = zip_bytes
+    mock_resp.content = SAMPLE_B3_XML
     mock_resp.raise_for_status = MagicMock()
     mock_session = MagicMock()
-    mock_session.get.return_value = mock_resp
+    mock_session.post.return_value = mock_resp
 
-    df = ipe_watcher.download_ipe_index(mock_session, 2026)
+    df = ipe_watcher.download_ipe_b3(mock_session, date(2026, 4, 22))
 
     assert isinstance(df, pd.DataFrame)
     assert len(df) == 2
-    assert "CNPJ_CIA" in df.columns
+    assert "ccvm" in df.columns
     assert "CATEG_DOC" in df.columns
+    assert "LINK_DOC" in df.columns
+    assert df.iloc[0]["DT_ENTREGA"] == "2026-04-22"
+
+
+def test_download_ipe_b3_raises_without_credentials(monkeypatch):
+    import ipe_watcher
+    monkeypatch.delenv("CVM_USERNAME", raising=False)
+    monkeypatch.delenv("CVM_PASSWORD", raising=False)
+
+    with pytest.raises(EnvironmentError, match="CVM_USERNAME"):
+        ipe_watcher.download_ipe_b3(MagicMock(), date(2026, 4, 22))
+
+
+def test_download_ipe_b3_raises_on_api_error(monkeypatch):
+    import ipe_watcher
+    monkeypatch.setenv("CVM_USERNAME", "testuser")
+    monkeypatch.setenv("CVM_PASSWORD", "testpass")
+
+    error_xml = b"""<?xml version="1.0" encoding="ISO-8859-1" ?>
+<ERROS DataSolicitada="22/04/2026 00:00" TipoDocumento="IPE" DataConsulta="22/04/2026 10:00">
+  <NUMERO_DO_ERRO>1</NUMERO_DO_ERRO>
+  <DESCRICAO_DO_ERRO>LOGIN INCORRETO</DESCRICAO_DO_ERRO>
+  <FONTE_DO_ERRO>Autenticacao</FONTE_DO_ERRO>
+</ERROS>"""
+    mock_resp = MagicMock()
+    mock_resp.content = error_xml
+    mock_resp.raise_for_status = MagicMock()
+    mock_session = MagicMock()
+    mock_session.post.return_value = mock_resp
+
+    with pytest.raises(RuntimeError, match="LOGIN INCORRETO"):
+        ipe_watcher.download_ipe_b3(mock_session, date(2026, 4, 22))
 
 
 # ── Task 7: pre_filter ────────────────────────────────────────────────────────
@@ -254,17 +287,33 @@ def test_main_processes_one_new_document(tmp_path, monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    monkeypatch.setenv("CVM_USERNAME", "fake-login")
+    monkeypatch.setenv("CVM_PASSWORD", "fake-senha")
 
     today = date.today().isoformat()
-    sample_csv = (
-        "CNPJ_CIA;DENOM_CIA;DT_REFER;DT_ENTREGA;CATEG_DOC;TIPO_DOC;ASSUNTO;LINK_DOC\n"
-        f"00494205000131;HAPVIDA PARTICIPACOES;{today};{today};"
-        "Fato Relevante;Fato Relevante;Acordo operacional;http://example.com/doc.pdf\n"
-    )
+
+    fake_company_map = {
+        "24392": {
+            "ticker": "HAPV3",
+            "cnpj": "05.197.443/0001-38",
+            "cnpj_digits": "05197443000138",
+            "denom": "HAPVIDA PARTICIPAÇÕES E INVESTIMENTOS S.A.",
+        }
+    }
+
+    fake_df = pd.DataFrame([{
+        "ccvm":       "24392",
+        "DT_ENTREGA": today,
+        "CATEG_DOC":  "Fato Relevante",
+        "TIPO_DOC":   "Fato Relevante",
+        "LINK_DOC":   "http://example.com/doc.pdf",
+        "ASSUNTO":    "Acordo operacional",
+        "Situacao":   "Liberado",
+    }])
 
     with (
-        patch("ipe_watcher.download_ipe_index") as mock_idx,
-        patch("ipe_watcher.load_cnpj_map", return_value={"00494205000131"}),
+        patch("ipe_watcher.download_ipe_b3", return_value=fake_df),
+        patch("ipe_watcher.load_company_map", return_value=fake_company_map),
         patch("ipe_watcher.download_pdf", return_value=b"%PDF-fake"),
         patch("ipe_watcher.extract_text", return_value="Texto do documento"),
         patch("ipe_watcher.call_llm", return_value="- Fato: X\n- Impacto: Y\n- Risco: Z"),
@@ -272,10 +321,6 @@ def test_main_processes_one_new_document(tmp_path, monkeypatch):
         patch("ipe_watcher.git_commit_back"),
         patch("ipe_watcher.create_session", return_value=MagicMock()),
     ):
-        df = pd.read_csv(io.StringIO(sample_csv), sep=";", dtype=str)
-        df["_cnpj_digits"] = df["CNPJ_CIA"].apply(ipe_watcher._digits)
-        mock_idx.return_value = df
-
         ipe_watcher.main()
 
     mock_notify.assert_called_once()
