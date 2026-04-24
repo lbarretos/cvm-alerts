@@ -14,6 +14,7 @@ import time
 import zipfile
 import xml.etree.ElementTree as ET
 from datetime import datetime, date
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 import pandas as pd
@@ -129,7 +130,7 @@ def download_ipe_b3(session, query_date: date) -> pd.DataFrame:
     logger.info("B3 API returned %d IPE records for %s", len(rows), date_str)
 
     if not rows:
-        return pd.DataFrame(columns=["CNPJ_CIA","DENOM_CIA","DT_ENTREGA","CATEG_DOC","TIPO_DOC","LINK_DOC","ASSUNTO","_cnpj_digits"])
+        return pd.DataFrame(columns=["ccvm","CNPJ_CIA","DENOM_CIA","DT_ENTREGA","CATEG_DOC","TIPO_DOC","LINK_DOC","ASSUNTO","_cnpj_digits"])
 
     df = pd.DataFrame(rows)
 
@@ -347,7 +348,7 @@ def main() -> None:
     company_map  = load_company_map()
     watched_ccvm = set(company_map.keys())
     processed    = load_processed_ids()
-    today        = date.today()
+    today        = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
     today_str    = today.isoformat()
     new_records  = []
 
