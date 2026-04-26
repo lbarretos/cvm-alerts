@@ -13,7 +13,7 @@ import subprocess
 import time
 import zipfile
 import xml.etree.ElementTree as ET
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
@@ -29,7 +29,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-PROCESSED_IDS_FILE = Path("datasets/ipe_processed_ids.json")
+PROCESSED_IDS_FILE  = Path("datasets/ipe_processed_ids.json")
+LAST_RUN_DATE_FILE  = Path("datasets/ipe_last_run_date.txt")
 SKIPPED_LOG_FILE   = Path("datasets/ipe_skipped_log.csv")
 INDEX_LATEST_FILE  = Path("datasets/ipe_index_latest.csv")
 CNPJ_MAP_FILE      = Path("config/cnpj_map.yaml")
@@ -235,6 +236,18 @@ def save_processed_ids(ids: set[str]) -> None:
         json.dump(sorted(ids), f, indent=2)
 
 
+def load_last_run_date() -> date:
+    """Return date of last successful run, or yesterday if no record exists."""
+    if LAST_RUN_DATE_FILE.exists():
+        return date.fromisoformat(LAST_RUN_DATE_FILE.read_text().strip())
+    return datetime.now(ZoneInfo("America/Sao_Paulo")).date() - timedelta(days=1)
+
+
+def save_last_run_date(d: date) -> None:
+    LAST_RUN_DATE_FILE.parent.mkdir(exist_ok=True)
+    LAST_RUN_DATE_FILE.write_text(d.isoformat())
+
+
 # ── PDF download + text extraction ────────────────────────────────────────────
 
 def download_pdf(session, url: str) -> bytes | None:
@@ -317,7 +330,7 @@ def send_notification(row: pd.Series, summary: str | None) -> None:
 
 def git_commit_back() -> None:
     """Commit ipe_skipped_log.csv back to the repo."""
-    files = [str(SKIPPED_LOG_FILE)]
+    files = [str(SKIPPED_LOG_FILE), str(LAST_RUN_DATE_FILE)]
     existing = [f for f in files if Path(f).exists()]
     if not existing:
         return
@@ -347,16 +360,29 @@ def main() -> None:
     session      = create_session()
     company_map  = load_company_map()
     watched_ccvm = set(company_map.keys())
-    processed    = load_processed_ids()
-    today        = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
-    today_str    = today.isoformat()
-    new_records  = []
+    processed      = load_processed_ids()
+    today          = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    last_run_date  = load_last_run_date()
+    days_back      = (today - last_run_date).days
+    query_dates    = [last_run_date + timedelta(days=i)
+                      for i in range(1, days_back + 1)] or [today]
+    valid_date_strs = {d.isoformat() for d in query_dates}
+    new_records    = []
 
-    try:
-        df = download_ipe_b3(session, today)
-    except Exception as exc:
-        logger.error("Failed to query B3 API: %s", exc)
+    logger.info("Querying %d date(s): %s", len(query_dates),
+                ", ".join(d.isoformat() for d in query_dates))
+
+    frames = []
+    for qd in query_dates:
+        try:
+            frames.append(download_ipe_b3(session, qd))
+        except Exception as exc:
+            logger.error("Failed to query B3 API for %s: %s", qd, exc)
+
+    if not frames:
         return
+
+    df = pd.concat(frames, ignore_index=True)
 
     # Filter: watched companies (by ccvm) + relevant categories
     df = df[df["ccvm"].isin(watched_ccvm)]
@@ -364,13 +390,16 @@ def main() -> None:
     logger.info("%d rows after category+ccvm filter", len(df))
 
     # Enrich with CNPJ and company name from local map
-    df["CNPJ_CIA"]    = df["ccvm"].map(lambda c: company_map[c]["cnpj"])
-    df["DENOM_CIA"]   = df["ccvm"].map(lambda c: company_map[c]["denom"])
+    df["CNPJ_CIA"]     = df["ccvm"].map(lambda c: company_map[c]["cnpj"])
+    df["DENOM_CIA"]    = df["ccvm"].map(lambda c: company_map[c]["denom"])
     df["_cnpj_digits"] = df["ccvm"].map(lambda c: company_map[c]["cnpj_digits"])
 
-    # B3 API already filters by date, but guard against edge cases
-    df = df[df["DT_ENTREGA"].str.startswith(today_str, na=False)]
-    logger.info("%d rows for today (%s)", len(df), today_str)
+    # Guard: keep only docs within our query window
+    df = df[df["DT_ENTREGA"].apply(
+        lambda x: any(x.startswith(d) for d in valid_date_strs) if pd.notna(x) else False
+    )]
+    logger.info("%d rows in query window (%s)", len(df),
+                ", ".join(sorted(valid_date_strs)))
 
     for _, row in df.iterrows():
         should_process, skip_reason = pre_filter(row)
@@ -404,6 +433,7 @@ def main() -> None:
         new_records.append(row)
 
     save_processed_ids(processed)
+    save_last_run_date(today)
 
     if new_records:
         pd.DataFrame(new_records).to_csv(INDEX_LATEST_FILE, index=False)

@@ -1,7 +1,7 @@
 import io
 import json
-from datetime import date
-from unittest.mock import MagicMock, patch
+from datetime import date, timedelta
+from unittest.mock import MagicMock, patch, call
 
 import pandas as pd
 import pytest
@@ -281,9 +281,10 @@ def test_send_notification_formats_message():
 
 def test_main_processes_one_new_document(tmp_path, monkeypatch):
     """Integration: main() finds 1 new doc, calls LLM, sends notification."""
-    monkeypatch.setattr(ipe_watcher, "PROCESSED_IDS_FILE", tmp_path / "ids.json")
-    monkeypatch.setattr(ipe_watcher, "SKIPPED_LOG_FILE",   tmp_path / "skipped.csv")
-    monkeypatch.setattr(ipe_watcher, "INDEX_LATEST_FILE",  tmp_path / "latest.csv")
+    monkeypatch.setattr(ipe_watcher, "PROCESSED_IDS_FILE",  tmp_path / "ids.json")
+    monkeypatch.setattr(ipe_watcher, "SKIPPED_LOG_FILE",    tmp_path / "skipped.csv")
+    monkeypatch.setattr(ipe_watcher, "INDEX_LATEST_FILE",   tmp_path / "latest.csv")
+    monkeypatch.setattr(ipe_watcher, "LAST_RUN_DATE_FILE",  tmp_path / "last_run_date.txt")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
@@ -327,3 +328,150 @@ def test_main_processes_one_new_document(tmp_path, monkeypatch):
     assert ipe_watcher.PROCESSED_IDS_FILE.exists()
     ids = ipe_watcher.load_processed_ids()
     assert len(ids) == 1
+
+
+# ── last_run_date state helpers ───────────────────────────────────────────────
+
+def test_load_last_run_date_returns_yesterday_when_missing(tmp_path, monkeypatch):
+    import ipe_watcher
+    monkeypatch.setattr(ipe_watcher, "LAST_RUN_DATE_FILE", tmp_path / "last_run_date.txt")
+    result = ipe_watcher.load_last_run_date()
+    assert result == date.today() - timedelta(days=1)
+
+
+def test_load_last_run_date_reads_existing_file(tmp_path, monkeypatch):
+    import ipe_watcher
+    state_file = tmp_path / "last_run_date.txt"
+    state_file.write_text("2026-04-18")  # a Friday
+    monkeypatch.setattr(ipe_watcher, "LAST_RUN_DATE_FILE", state_file)
+    assert ipe_watcher.load_last_run_date() == date(2026, 4, 18)
+
+
+def test_save_last_run_date_writes_iso_string(tmp_path, monkeypatch):
+    import ipe_watcher
+    state_file = tmp_path / "last_run_date.txt"
+    monkeypatch.setattr(ipe_watcher, "LAST_RUN_DATE_FILE", state_file)
+    ipe_watcher.save_last_run_date(date(2026, 4, 21))
+    assert state_file.read_text() == "2026-04-21"
+
+
+# ── query_dates window logic ──────────────────────────────────────────────────
+
+def test_main_queries_weekend_dates_on_monday(tmp_path, monkeypatch):
+    """On Monday (2026-04-20), last run was Friday (2026-04-17): must query Sat, Sun, Mon."""
+    import ipe_watcher
+
+    monday   = date(2026, 4, 20)
+    friday   = date(2026, 4, 17)
+    saturday = date(2026, 4, 18)
+    sunday   = date(2026, 4, 19)
+
+    state_file = tmp_path / "last_run_date.txt"
+    state_file.write_text(friday.isoformat())
+
+    monkeypatch.setattr(ipe_watcher, "PROCESSED_IDS_FILE",  tmp_path / "ids.json")
+    monkeypatch.setattr(ipe_watcher, "SKIPPED_LOG_FILE",    tmp_path / "skipped.csv")
+    monkeypatch.setattr(ipe_watcher, "INDEX_LATEST_FILE",   tmp_path / "latest.csv")
+    monkeypatch.setattr(ipe_watcher, "LAST_RUN_DATE_FILE",  state_file)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    monkeypatch.setenv("CVM_USERNAME", "fake-login")
+    monkeypatch.setenv("CVM_PASSWORD", "fake-senha")
+
+    empty_df = pd.DataFrame(columns=["ccvm", "DT_ENTREGA", "CATEG_DOC",
+                                      "TIPO_DOC", "LINK_DOC", "ASSUNTO", "Situacao"])
+
+    queried_dates = []
+
+    def fake_download(session, qd):
+        queried_dates.append(qd)
+        return empty_df.copy()
+
+    with (
+        patch("ipe_watcher.download_ipe_b3", side_effect=fake_download),
+        patch("ipe_watcher.load_company_map", return_value={}),
+        patch("ipe_watcher.git_commit_back"),
+        patch("ipe_watcher.create_session", return_value=MagicMock()),
+        patch("ipe_watcher.datetime") as mock_dt,
+    ):
+        from zoneinfo import ZoneInfo
+        mock_dt.now.return_value.date.return_value = monday
+        mock_dt.utcnow.return_value.strftime.return_value = "2026-04-20 09:00 UTC"
+        ipe_watcher.main()
+
+    assert queried_dates == [saturday, sunday, monday]
+
+
+def test_main_queries_only_today_on_intraday_rerun(tmp_path, monkeypatch):
+    """When last_run_date == today, query only today (intra-day re-run)."""
+    import ipe_watcher
+
+    today = date(2026, 4, 21)
+    state_file = tmp_path / "last_run_date.txt"
+    state_file.write_text(today.isoformat())
+
+    monkeypatch.setattr(ipe_watcher, "PROCESSED_IDS_FILE",  tmp_path / "ids.json")
+    monkeypatch.setattr(ipe_watcher, "SKIPPED_LOG_FILE",    tmp_path / "skipped.csv")
+    monkeypatch.setattr(ipe_watcher, "INDEX_LATEST_FILE",   tmp_path / "latest.csv")
+    monkeypatch.setattr(ipe_watcher, "LAST_RUN_DATE_FILE",  state_file)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    monkeypatch.setenv("CVM_USERNAME", "fake-login")
+    monkeypatch.setenv("CVM_PASSWORD", "fake-senha")
+
+    empty_df = pd.DataFrame(columns=["ccvm", "DT_ENTREGA", "CATEG_DOC",
+                                      "TIPO_DOC", "LINK_DOC", "ASSUNTO", "Situacao"])
+    queried_dates = []
+
+    def fake_download(session, qd):
+        queried_dates.append(qd)
+        return empty_df.copy()
+
+    with (
+        patch("ipe_watcher.download_ipe_b3", side_effect=fake_download),
+        patch("ipe_watcher.load_company_map", return_value={}),
+        patch("ipe_watcher.git_commit_back"),
+        patch("ipe_watcher.create_session", return_value=MagicMock()),
+        patch("ipe_watcher.datetime") as mock_dt,
+    ):
+        mock_dt.now.return_value.date.return_value = today
+        mock_dt.utcnow.return_value.strftime.return_value = "2026-04-21 12:00 UTC"
+        ipe_watcher.main()
+
+    assert queried_dates == [today]
+
+
+def test_main_saves_last_run_date_after_run(tmp_path, monkeypatch):
+    """main() must persist today's date to LAST_RUN_DATE_FILE after completing."""
+    import ipe_watcher
+
+    today = date(2026, 4, 21)
+    state_file = tmp_path / "last_run_date.txt"
+
+    monkeypatch.setattr(ipe_watcher, "PROCESSED_IDS_FILE",  tmp_path / "ids.json")
+    monkeypatch.setattr(ipe_watcher, "SKIPPED_LOG_FILE",    tmp_path / "skipped.csv")
+    monkeypatch.setattr(ipe_watcher, "INDEX_LATEST_FILE",   tmp_path / "latest.csv")
+    monkeypatch.setattr(ipe_watcher, "LAST_RUN_DATE_FILE",  state_file)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    monkeypatch.setenv("CVM_USERNAME", "fake-login")
+    monkeypatch.setenv("CVM_PASSWORD", "fake-senha")
+
+    empty_df = pd.DataFrame(columns=["ccvm", "DT_ENTREGA", "CATEG_DOC",
+                                      "TIPO_DOC", "LINK_DOC", "ASSUNTO", "Situacao"])
+
+    with (
+        patch("ipe_watcher.download_ipe_b3", return_value=empty_df),
+        patch("ipe_watcher.load_company_map", return_value={}),
+        patch("ipe_watcher.git_commit_back"),
+        patch("ipe_watcher.create_session", return_value=MagicMock()),
+        patch("ipe_watcher.datetime") as mock_dt,
+    ):
+        mock_dt.now.return_value.date.return_value = today
+        mock_dt.utcnow.return_value.strftime.return_value = "2026-04-21 12:00 UTC"
+        ipe_watcher.main()
+
+    assert state_file.read_text() == "2026-04-21"
