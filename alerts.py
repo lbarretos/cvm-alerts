@@ -12,13 +12,8 @@ EXEC_POSITIONS = {
     'Diretor ou Vinculado',
 }
 
-# Movement types that constitute a sell (used for blackout rule)
-# Matches "Venda à vista", "Venda à termo", "Venda" but not "Compra à venda"
-_SELL_PREFIX = 'Venda'
-
 P1_VOLUME_THRESHOLD  = 500_000
 P2_MONTHLY_THRESHOLD = 2_000_000
-BLACKOUT_DAYS        = 30
 
 
 def load_coverage(config_path: str = 'config/coverage.yaml') -> List[str]:
@@ -47,7 +42,6 @@ def classify_alerts(delta_df: pd.DataFrame, coverage_tickers: List[str]) -> pd.D
 
     Rules (highest wins; reasons concatenated when multiple same-priority rules match):
       P1 — Controlador/C-level/Conselheiro AND volume > R$ 500k
-      P1 — Sell by any of the above within 30 days before Reference_Date (blackout proxy)
       P2 — Monthly aggregate volume by insider > R$ 2M
       P3 — Any operation in a coverage ticker
 
@@ -71,8 +65,7 @@ def classify_alerts(delta_df: pd.DataFrame, coverage_tickers: List[str]) -> pd.D
     df['Reference_Date'] = pd.to_datetime(df['Reference_Date'])
     df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce').fillna(0)
 
-    vol_abs   = df['Volume'].abs()
-    days_gap  = (df['Reference_Date'] - df['Movement_Date']).dt.days  # positive = Mov before Ref
+    vol_abs = df['Volume'].abs()
 
     # Monthly volume per insider vehicle + listed company
     df['_ym'] = df['Movement_Date'].dt.to_period('M')
@@ -81,22 +74,16 @@ def classify_alerts(delta_df: pd.DataFrame, coverage_tickers: List[str]) -> pd.D
     )
 
     # Boolean masks
-    is_exec       = df['Position_Type'].isin(EXEC_POSITIONS)
-    is_sell       = df['Movement_Type'].str.startswith(_SELL_PREFIX, na=False)
-    high_vol      = vol_abs > P1_VOLUME_THRESHOLD
-    in_blackout   = days_gap.between(0, BLACKOUT_DAYS)
-    high_monthly  = monthly_vol > P2_MONTHLY_THRESHOLD
-    in_coverage   = df['Company_Name'].apply(lambda n: _in_coverage(n, coverage_tickers))
+    is_exec      = df['Position_Type'].isin(EXEC_POSITIONS)
+    high_vol     = vol_abs > P1_VOLUME_THRESHOLD
+    high_monthly = monthly_vol > P2_MONTHLY_THRESHOLD
+    in_coverage  = df['Company_Name'].apply(lambda n: _in_coverage(n, coverage_tickers))
 
-    # Per-row reason strings for P1 rules (need row-level data)
-    p1a_reason = (
+    # Per-row reason string for P1
+    p1_reason = (
         'Insider ' + df['Position_Type'].astype(str)
         + ' com volume R$ ' + vol_abs.map(lambda v: f'{v:,.0f}')
         + f' > {P1_VOLUME_THRESHOLD:,.0f}'
-    )
-    p1b_reason = (
-        'Venda em blackout ≤' + str(BLACKOUT_DAYS)
-        + 'd antes de Reference_Date por ' + df['Position_Type'].astype(str)
     )
 
     # Rule registry: (priority_int, reason_series_or_str, mask)
@@ -104,8 +91,7 @@ def classify_alerts(delta_df: pd.DataFrame, coverage_tickers: List[str]) -> pd.D
     rules = [
         (3, pd.Series('Operação em empresa da cobertura', index=df.index), in_coverage),
         (2, pd.Series(f'Volume mensal por insider > R$ {P2_MONTHLY_THRESHOLD:,.0f}', index=df.index), high_monthly),
-        (1, p1a_reason, is_exec & high_vol),
-        (1, p1b_reason, is_exec & is_sell & in_blackout),
+        (1, p1_reason, is_exec & high_vol),
     ]
 
     prio_int = pd.Series(99, index=df.index)   # 99 = no alert
