@@ -40,11 +40,13 @@ jobs:
 
       - name: Run IPE watcher
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
-          DEEPSEEK_API_KEY:   ${{ secrets.DEEPSEEK_API_KEY }}
-          CVM_USERNAME:       ${{ secrets.CVM_USERNAME }}
-          CVM_PASSWORD:       ${{ secrets.CVM_PASSWORD }}
+          TELEGRAM_BOT_TOKEN:   ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:     ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_BOT_TOKEN_2: ${{ secrets.TELEGRAM_BOT_TOKEN_2 }}
+          TELEGRAM_CHAT_ID_2:   ${{ secrets.TELEGRAM_CHAT_ID_2 }}
+          DEEPSEEK_API_KEY:     ${{ secrets.DEEPSEEK_API_KEY }}
+          CVM_USERNAME:         ${{ secrets.CVM_USERNAME }}
+          CVM_PASSWORD:         ${{ secrets.CVM_PASSWORD }}
         run: python ipe_watcher.py
 
       - name: Save processed IDs cache
