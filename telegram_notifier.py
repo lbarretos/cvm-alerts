@@ -11,11 +11,42 @@ MSG_LIMIT = 3800   # hard limit is 4096; keep margin for headers
 logger = logging.getLogger(__name__)
 
 
-def _get_credentials() -> tuple:
-    """Read bot credentials from environment. Raises KeyError if absent."""
-    token   = os.environ['TELEGRAM_BOT_TOKEN']
-    chat_id = os.environ['TELEGRAM_CHAT_ID']
-    return token, chat_id
+def _get_all_recipients() -> list[tuple[str, str]]:
+    """Return list of (token, chat_id) pairs from environment.
+
+    Supports multiple recipients via:
+    - Comma-separated TELEGRAM_CHAT_ID (same bot, multiple chats)
+    - TELEGRAM_BOT_TOKEN_2 + TELEGRAM_CHAT_ID_2 (second bot, optional)
+    - TELEGRAM_BOT_TOKEN_N + TELEGRAM_CHAT_ID_N (N-th bot, optional)
+
+    Raises KeyError if TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID are absent.
+    """
+    recipients: list[tuple[str, str]] = []
+
+    token = os.environ['TELEGRAM_BOT_TOKEN']
+    for cid in os.environ['TELEGRAM_CHAT_ID'].split(','):
+        cid = cid.strip()
+        if cid:
+            recipients.append((token, cid))
+
+    i = 2
+    while True:
+        token2 = os.environ.get(f'TELEGRAM_BOT_TOKEN_{i}')
+        cid2   = os.environ.get(f'TELEGRAM_CHAT_ID_{i}')
+        if not token2 or not cid2:
+            break
+        for cid in cid2.split(','):
+            cid = cid.strip()
+            if cid:
+                recipients.append((token2, cid))
+        i += 1
+
+    return recipients
+
+
+def _get_credentials() -> tuple[str, str]:
+    """Read primary bot credentials from environment. Raises KeyError if absent."""
+    return os.environ['TELEGRAM_BOT_TOKEN'], os.environ['TELEGRAM_CHAT_ID']
 
 
 def _format_alert(row: pd.Series) -> str:
@@ -73,7 +104,7 @@ def send_alerts(alerts_df: pd.DataFrame) -> None:
     if alerts_df is None or alerts_df.empty:
         return
 
-    token, chat_id = _get_credentials()
+    recipients = _get_all_recipients()
 
     for priority in ('P1', 'P2', 'P3'):
         group = alerts_df[alerts_df['priority'] == priority]
@@ -84,14 +115,15 @@ def send_alerts(alerts_df: pd.DataFrame) -> None:
         blocks = [_format_alert(row) for _, row in group.iterrows()]
 
         for msg in _chunk_messages(header, blocks, MSG_LIMIT):
-            _send(token, chat_id, msg)
+            for token, chat_id in recipients:
+                _send(token, chat_id, msg)
 
 
 def send_message(text: str) -> None:
-    """Send a single free-form Markdown message to the configured Telegram chat.
+    """Send a single free-form Markdown message to all configured Telegram recipients.
 
     Truncates to MSG_LIMIT characters. Network errors are logged, not raised.
     Raises KeyError if TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID are not set.
     """
-    token, chat_id = _get_credentials()
-    _send(token, chat_id, text[:MSG_LIMIT])
+    for token, chat_id in _get_all_recipients():
+        _send(token, chat_id, text[:MSG_LIMIT])
