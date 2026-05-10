@@ -511,6 +511,12 @@ def main() -> None:
 
     df = pd.concat(frames, ignore_index=True)
 
+    # Log categorias e empresas retornadas antes de filtrar (diagnóstico)
+    logger.info("Categorias B3 (antes do filtro): %s",
+                df["CATEG_DOC"].value_counts().to_dict())
+    logger.info("CCVMs cobertura com registros: %s",
+                sorted(set(df["ccvm"]) & watched_ccvm))
+
     # Filter: watched companies (by ccvm) + relevant categories
     df = df[df["ccvm"].isin(watched_ccvm)]
     df = df[df["CATEG_DOC"].isin(ALL_WATCHED_CATEGORIES)]
