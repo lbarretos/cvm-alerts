@@ -527,12 +527,18 @@ def main() -> None:
     df["DENOM_CIA"]    = df["ccvm"].map(lambda c: company_map[c]["denom"])
     df["_cnpj_digits"] = df["ccvm"].map(lambda c: company_map[c]["cnpj_digits"])
 
-    # Guard: keep only docs within our query window
-    df = df[df["DT_ENTREGA"].apply(
+    # Guard: keep regular docs within our query window.
+    # VLMO records use the reference month as DT_ENTREGA (e.g. April), not the
+    # filing date, so the date guard would wrongly discard them. Dedup by hash
+    # is sufficient for VLMO idempotency.
+    df_vlmo    = df[df["CATEG_DOC"] == VLMO_CATEGORY]
+    df_regular = df[df["CATEG_DOC"] != VLMO_CATEGORY]
+    df_regular = df_regular[df_regular["DT_ENTREGA"].apply(
         lambda x: any(x.startswith(d) for d in valid_date_strs) if pd.notna(x) else False
     )]
-    logger.info("%d rows in query window (%s)", len(df),
-                ", ".join(sorted(valid_date_strs)))
+    df = pd.concat([df_vlmo, df_regular], ignore_index=True)
+    logger.info("%d rows in query window (%s) + %d VLMO rows", len(df_regular),
+                ", ".join(sorted(valid_date_strs)), len(df_vlmo))
 
     for _, row in df.iterrows():
         categ = str(row.get("CATEG_DOC", ""))
