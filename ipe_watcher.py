@@ -319,7 +319,9 @@ def _parse_vlmo_page(text: str) -> list[dict]:
     for line in lines:
         m = _VLMO_POS_RE.search(line)
         if m:
-            pos_type = m.group(1).strip()
+            # Strip trailing unchecked checkbox groups on the same line
+            # e.g. "Controlador ( ) Conselho de Adm..." → "Controlador"
+            pos_type = re.sub(r"\s*\(.*", "", m.group(1)).strip()
             break
 
     transactions: list[dict] = []
@@ -349,14 +351,20 @@ def _parse_vlmo_page(text: str) -> list[dict]:
             op_type = (pending_op + (" " + op_end if op_end else "")).strip() or "N/A"
 
             try:
+                qty = _parse_brl_number(qty_str)
+                vol = _parse_brl_number(vol_str)
+                # Skip spurious matches: zero volume or unparsed operation
+                if vol == 0 or op_type == "N/A":
+                    pending_op = ""
+                    continue
                 transactions.append({
                     "position_type": pos_type or "N/A",
                     "operation_type": op_type,
                     "asset":          asset,
                     "day":            int(day_str),
-                    "quantity":       _parse_brl_number(qty_str),
+                    "quantity":       qty,
                     "unit_price":     _parse_brl_number(price_str),
-                    "volume":         _parse_brl_number(vol_str),
+                    "volume":         vol,
                 })
             except ValueError:
                 pass
@@ -431,22 +439,28 @@ def send_vlmo_notification(row: pd.Series, transactions: list[dict]) -> None:
     dt      = row.get("DT_ENTREGA", "")
     link    = row.get("LINK_DOC", "")
 
+    ref_month = dt[:7] if dt else ""  # "2026-04"
     if transactions:
-        lines = [f"*VLMO — {company}*", f"_{dt}_", ""]
+        lines = [f"📋 *VLMO — {company}*", f"_{ref_month}_", ""]
         for txn in transactions[:5]:
             pos = txn.get("position_type", "N/A")
             op  = txn.get("operation_type", "N/A")
+            qty = int(txn.get("quantity", 0))
             vol = txn.get("volume", 0.0)
-            lines.append(f"• {pos}: {op} — R$ {abs(vol):,.0f}")
+            asset = txn.get("asset", "")
+            asset_part = f" ({asset})" if asset else ""
+            lines.append(
+                f"• *{pos}*{asset_part}\n"
+                f"  {op} · {qty:,} ações · R$ {abs(vol):,.0f}"
+            )
         if len(transactions) > 5:
-            lines.append(f"_... e mais {len(transactions) - 5} operações_")
+            lines.append(f"_...e mais {len(transactions) - 5} operações_")
         lines.extend(["", f"[Ver documento]({link})"])
         msg = "\n".join(lines)
     else:
         msg = (
-            f"*VLMO — {company}*\n"
-            f"_{dt}_\n\n"
-            f"Novo relatório de movimentação de insiders\n\n"
+            f"📋 *VLMO — {company}*\n"
+            f"_{ref_month}_ · sem transações identificadas\n\n"
             f"[Ver documento]({link})"
         )
 

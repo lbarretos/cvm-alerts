@@ -585,7 +585,7 @@ def test_send_vlmo_notification_empty_transactions():
         mock_send.assert_called_once()
         msg = mock_send.call_args[0][0]
         assert "TEST CO" in msg
-        assert "insiders" in msg.lower()
+        assert "sem transações" in msg.lower()
 
 
 def test_send_vlmo_notification_caps_at_five_transactions():
