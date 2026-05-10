@@ -443,6 +443,226 @@ def test_main_queries_only_today_on_intraday_rerun(tmp_path, monkeypatch):
     assert queried_dates == [today]
 
 
+# ── VLMO: _parse_brl_number ──────────────────────────────────────────────────
+
+def test_parse_brl_number_integer():
+    assert ipe_watcher._parse_brl_number("64.800") == 64800.0
+
+
+def test_parse_brl_number_decimal():
+    import pytest
+    assert ipe_watcher._parse_brl_number("22,85160") == pytest.approx(22.8516)
+
+
+def test_parse_brl_number_full():
+    import pytest
+    assert ipe_watcher._parse_brl_number("1.480.783,68") == pytest.approx(1480783.68)
+
+
+def test_parse_brl_number_no_thousands():
+    assert ipe_watcher._parse_brl_number("50,00") == 50.0
+
+
+# ── VLMO: _parse_vlmo_page ───────────────────────────────────────────────────
+
+SAMPLE_VLMO_PAGE = """\
+Formulário de Posição Consolidada
+Nome do Controlador/Administrador/Acionista:
+JOAO DA SILVA SANTOS
+
+Denominação da Companhia: TEST EMPRESA S.A.
+
+( ) Controlador ou Vinculado
+( X ) Diretor ou Vinculado
+( ) Conselho de Administração ou Vinculado
+( ) Conselho Fiscal ou Vinculado
+
+Quadro 2 – Negociações de Valores Mobiliários
+
+Compra à
+Ações ON TEST 5 1.000 50,00 50.000,00
+vista
+Venda à
+Ações PN TEST 15 2.500 45,50 113.750,00
+vista
+"""
+
+
+def test_parse_vlmo_page_extracts_two_transactions():
+    import pytest
+    txns = ipe_watcher._parse_vlmo_page(SAMPLE_VLMO_PAGE)
+    assert len(txns) == 2
+
+
+def test_parse_vlmo_page_extracts_position_type():
+    txns = ipe_watcher._parse_vlmo_page(SAMPLE_VLMO_PAGE)
+    assert txns[0]["position_type"] == "Diretor ou Vinculado"
+    assert txns[1]["position_type"] == "Diretor ou Vinculado"
+
+
+def test_parse_vlmo_page_extracts_operation_types():
+    txns = ipe_watcher._parse_vlmo_page(SAMPLE_VLMO_PAGE)
+    assert "Compra" in txns[0]["operation_type"]
+    assert "Venda" in txns[1]["operation_type"]
+
+
+def test_parse_vlmo_page_extracts_numeric_fields():
+    import pytest
+    txns = ipe_watcher._parse_vlmo_page(SAMPLE_VLMO_PAGE)
+    assert txns[0]["quantity"] == 1000.0
+    assert txns[0]["volume"] == pytest.approx(50000.0)
+    assert txns[1]["quantity"] == 2500.0
+    assert txns[1]["volume"] == pytest.approx(113750.0)
+
+
+def test_parse_vlmo_page_empty_text_returns_empty():
+    txns = ipe_watcher._parse_vlmo_page("")
+    assert txns == []
+
+
+def test_parse_vlmo_page_no_transactions_returns_empty():
+    txns = ipe_watcher._parse_vlmo_page("Denominação da Companhia: EMPRESA\n( X ) Diretor ou Vinculado\n")
+    assert txns == []
+
+
+# ── VLMO: parse_vlmo_pdf ─────────────────────────────────────────────────────
+
+def test_parse_vlmo_pdf_calls_pdfplumber():
+    mock_page = MagicMock()
+    mock_page.extract_text.return_value = SAMPLE_VLMO_PAGE
+    mock_pdf_ctx = MagicMock()
+    mock_pdf_ctx.__enter__ = MagicMock(return_value=mock_pdf_ctx)
+    mock_pdf_ctx.__exit__ = MagicMock(return_value=False)
+    mock_pdf_ctx.pages = [mock_page]
+
+    with patch("ipe_watcher.pdfplumber.open", return_value=mock_pdf_ctx):
+        result = ipe_watcher.parse_vlmo_pdf(b"%PDF-fake")
+
+    assert len(result) == 2
+
+
+def test_parse_vlmo_pdf_returns_empty_on_exception():
+    with patch("ipe_watcher.pdfplumber.open", side_effect=Exception("bad PDF")):
+        result = ipe_watcher.parse_vlmo_pdf(b"not a pdf")
+    assert result == []
+
+
+# ── VLMO: send_vlmo_notification ─────────────────────────────────────────────
+
+def test_send_vlmo_notification_with_transactions():
+    row = pd.Series({
+        "DENOM_CIA":   "TEST CO",
+        "DT_ENTREGA":  "2026-04-22",
+        "LINK_DOC":    "http://example.com/vlmo.pdf",
+    })
+    txns = [{
+        "position_type": "Diretor ou Vinculado",
+        "operation_type": "Compra à vista",
+        "asset":          "Ações ON",
+        "day":            5,
+        "quantity":       1000.0,
+        "unit_price":     50.0,
+        "volume":         50000.0,
+    }]
+    with patch("ipe_watcher.send_message") as mock_send:
+        ipe_watcher.send_vlmo_notification(row, txns)
+        mock_send.assert_called_once()
+        msg = mock_send.call_args[0][0]
+        assert "TEST CO" in msg
+        assert "Diretor" in msg
+        assert "Compra" in msg
+        assert "50,000" in msg
+
+
+def test_send_vlmo_notification_empty_transactions():
+    row = pd.Series({
+        "DENOM_CIA":  "TEST CO",
+        "DT_ENTREGA": "2026-04-22",
+        "LINK_DOC":   "http://example.com/vlmo.pdf",
+    })
+    with patch("ipe_watcher.send_message") as mock_send:
+        ipe_watcher.send_vlmo_notification(row, [])
+        mock_send.assert_called_once()
+        msg = mock_send.call_args[0][0]
+        assert "TEST CO" in msg
+        assert "insiders" in msg.lower()
+
+
+def test_send_vlmo_notification_caps_at_five_transactions():
+    row = pd.Series({"DENOM_CIA": "CO", "DT_ENTREGA": "2026-04-22", "LINK_DOC": "http://x"})
+    txns = [
+        {"position_type": "Diretor ou Vinculado", "operation_type": "Compra", "volume": i * 1000.0}
+        for i in range(8)
+    ]
+    with patch("ipe_watcher.send_message") as mock_send:
+        ipe_watcher.send_vlmo_notification(row, txns)
+        msg = mock_send.call_args[0][0]
+        assert "3 operações" in msg
+
+
+# ── VLMO: integration in main() ──────────────────────────────────────────────
+
+def test_main_processes_vlmo_document(tmp_path, monkeypatch):
+    """main() routes VLMO to parse_vlmo_pdf + send_vlmo_notification, skips LLM."""
+    monkeypatch.setattr(ipe_watcher, "PROCESSED_IDS_FILE",  tmp_path / "ids.json")
+    monkeypatch.setattr(ipe_watcher, "SKIPPED_LOG_FILE",    tmp_path / "skipped.csv")
+    monkeypatch.setattr(ipe_watcher, "INDEX_LATEST_FILE",   tmp_path / "latest.csv")
+    monkeypatch.setattr(ipe_watcher, "LAST_RUN_DATE_FILE",  tmp_path / "last_run_date.txt")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    monkeypatch.setenv("CVM_USERNAME", "fake-login")
+    monkeypatch.setenv("CVM_PASSWORD", "fake-senha")
+
+    today = date.today().isoformat()
+    fake_company_map = {
+        "24392": {
+            "ticker":       "HAPV3",
+            "cnpj":         "05.197.443/0001-38",
+            "cnpj_digits":  "05197443000138",
+            "denom":        "HAPVIDA",
+        }
+    }
+    fake_df = pd.DataFrame([{
+        "ccvm":       "24392",
+        "DT_ENTREGA": today,
+        "CATEG_DOC":  ipe_watcher.VLMO_CATEGORY,
+        "TIPO_DOC":   "Valores Mobiliários",
+        "LINK_DOC":   "http://example.com/vlmo.pdf",
+        "ASSUNTO":    "Posição Consolidada",
+        "Situacao":   "Liberado",
+    }])
+
+    fake_txns = [{
+        "position_type": "Diretor ou Vinculado",
+        "operation_type": "Compra à vista",
+        "asset":          "Ações ON",
+        "day":            5,
+        "quantity":       1000.0,
+        "unit_price":     50.0,
+        "volume":         50000.0,
+    }]
+
+    with (
+        patch("ipe_watcher.download_ipe_b3",       return_value=fake_df),
+        patch("ipe_watcher.load_company_map",       return_value=fake_company_map),
+        patch("ipe_watcher.download_pdf",           return_value=b"%PDF-fake"),
+        patch("ipe_watcher.parse_vlmo_pdf",         return_value=fake_txns),
+        patch("ipe_watcher.send_vlmo_notification") as mock_vlmo_notify,
+        patch("ipe_watcher.call_llm")               as mock_llm,
+        patch("ipe_watcher.send_notification")      as mock_notify,
+        patch("ipe_watcher.git_commit_back"),
+        patch("ipe_watcher.create_session",         return_value=MagicMock()),
+    ):
+        ipe_watcher.main()
+
+    mock_vlmo_notify.assert_called_once()
+    mock_notify.assert_not_called()
+    mock_llm.assert_not_called()
+    ids = ipe_watcher.load_processed_ids()
+    assert len(ids) == 1
+
+
 def test_main_saves_last_run_date_after_run(tmp_path, monkeypatch):
     """main() must persist today's date to LAST_RUN_DATE_FILE after completing."""
     import ipe_watcher
