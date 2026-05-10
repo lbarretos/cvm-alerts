@@ -50,6 +50,28 @@ CATEGORIES = frozenset([
     "Aviso aos Acionistas",
 ])
 
+VLMO_CATEGORY = "Valores Mobiliários negociados e detidos (art. 11 da Instr. CVM nº 358)"
+ALL_WATCHED_CATEGORIES = CATEGORIES | {VLMO_CATEGORY}
+
+# ── VLMO PDF parsing patterns ───────────────────────────────────────────────────
+
+_VLMO_POS_RE = re.compile(
+    r'\(\s*[xX]\s*\)\s*'
+    r'(Controlador[^\n]*|Conselho\s+de\s+Administra[çc][aã]o[^\n]*|'
+    r'Conselho\s+Fiscal[^\n]*|Diret[^\n]*|[Óo]rg[aã]os?\s+T[eé]cnicos?[^\n]*)',
+    re.IGNORECASE,
+)
+_VLMO_OP_START_RE = re.compile(
+    r'^(Compra|Venda|Transfer[eê]ncia|Bonifica[çc][aã]o|'
+    r'Subscri[çc][aã]o|Doa[çc][aã]o|Heran[çc]a|Exerc[ií]cio)',
+    re.IGNORECASE,
+)
+_VLMO_OP_END_RE = re.compile(
+    r'^(à\s+vista|a\s+vista|vista|à\s+termo|a\s+termo|termo|firme)',
+    re.IGNORECASE,
+)
+_VLMO_TXN_RE = re.compile(r'(\d{1,2})\s+([\d.]+)\s+([\d.,]+)\s+([\d.,]+)\s*$')
+
 # ── CNPJ helpers ──────────────────────────────────────────────────────────────
 
 def _digits(cnpj: str) -> str:
@@ -282,6 +304,83 @@ def extract_text(pdf_bytes: bytes) -> str:
         return ""
 
 
+# ── VLMO parsing ──────────────────────────────────────────────────────────────
+
+def _parse_brl_number(s: str) -> float:
+    """Parse Brazilian-format number (e.g. '1.480.783,68') to float."""
+    return float(s.strip().replace(".", "").replace(",", "."))
+
+
+def _parse_vlmo_page(text: str) -> list[dict]:
+    """Parse one VLMO PDF page into a list of transaction dicts."""
+    lines = [l.rstrip() for l in text.splitlines()]
+
+    pos_type = ""
+    for line in lines:
+        m = _VLMO_POS_RE.search(line)
+        if m:
+            pos_type = m.group(1).strip()
+            break
+
+    transactions: list[dict] = []
+    pending_op = ""
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        if _VLMO_OP_START_RE.match(stripped):
+            pending_op = stripped
+            continue
+
+        m = _VLMO_TXN_RE.search(line)
+        if m:
+            day_str, qty_str, price_str, vol_str = m.groups()
+            asset = line[:m.start()].strip()
+
+            op_end = ""
+            for j in range(i + 1, min(i + 3, len(lines))):
+                nxt = lines[j].strip()
+                if nxt and _VLMO_OP_END_RE.match(nxt):
+                    op_end = nxt
+                    break
+
+            op_type = (pending_op + (" " + op_end if op_end else "")).strip() or "N/A"
+
+            try:
+                transactions.append({
+                    "position_type": pos_type or "N/A",
+                    "operation_type": op_type,
+                    "asset":          asset,
+                    "day":            int(day_str),
+                    "quantity":       _parse_brl_number(qty_str),
+                    "unit_price":     _parse_brl_number(price_str),
+                    "volume":         _parse_brl_number(vol_str),
+                })
+            except ValueError:
+                pass
+
+            pending_op = ""
+
+    return transactions
+
+
+def parse_vlmo_pdf(pdf_bytes: bytes) -> list[dict]:
+    """Parse all pages of a VLMO PDF; return list of transaction dicts."""
+    try:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            txns: list[dict] = []
+            for page in pdf.pages:
+                text = page.extract_text() or ""
+                if text.strip():
+                    txns.extend(_parse_vlmo_page(text))
+            return txns
+    except Exception as exc:
+        logger.warning("VLMO PDF parsing failed: %s", exc)
+        return []
+
+
 # ── LLM + notification ────────────────────────────────────────────────────────
 
 def call_llm(doc_type: str, company: str, date_str: str, text: str) -> str | None:
@@ -323,6 +422,34 @@ def send_notification(row: pd.Series, summary: str | None) -> None:
         f"{body}\n\n"
         f"[PDF]({link})"
     )
+    send_message(msg)
+
+
+def send_vlmo_notification(row: pd.Series, transactions: list[dict]) -> None:
+    """Send Telegram alert for a new VLMO filing."""
+    company = row.get("DENOM_CIA", "")
+    dt      = row.get("DT_ENTREGA", "")
+    link    = row.get("LINK_DOC", "")
+
+    if transactions:
+        lines = [f"*VLMO — {company}*", f"_{dt}_", ""]
+        for txn in transactions[:5]:
+            pos = txn.get("position_type", "N/A")
+            op  = txn.get("operation_type", "N/A")
+            vol = txn.get("volume", 0.0)
+            lines.append(f"• {pos}: {op} — R$ {abs(vol):,.0f}")
+        if len(transactions) > 5:
+            lines.append(f"_... e mais {len(transactions) - 5} operações_")
+        lines.extend(["", f"[Ver documento]({link})"])
+        msg = "\n".join(lines)
+    else:
+        msg = (
+            f"*VLMO — {company}*\n"
+            f"_{dt}_\n\n"
+            f"Novo relatório de movimentação de insiders\n\n"
+            f"[Ver documento]({link})"
+        )
+
     send_message(msg)
 
 
@@ -386,7 +513,7 @@ def main() -> None:
 
     # Filter: watched companies (by ccvm) + relevant categories
     df = df[df["ccvm"].isin(watched_ccvm)]
-    df = df[df["CATEG_DOC"].isin(CATEGORIES)]
+    df = df[df["CATEG_DOC"].isin(ALL_WATCHED_CATEGORIES)]
     logger.info("%d rows after category+ccvm filter", len(df))
 
     # Enrich with CNPJ and company name from local map
@@ -402,6 +529,23 @@ def main() -> None:
                 ", ".join(sorted(valid_date_strs)))
 
     for _, row in df.iterrows():
+        categ = str(row.get("CATEG_DOC", ""))
+
+        if categ == VLMO_CATEGORY:
+            doc_hash = make_hash(row)
+            if doc_hash in processed:
+                continue
+            link = str(row.get("LINK_DOC", ""))
+            pdf_bytes = None
+            if link:
+                time.sleep(2)
+                pdf_bytes = download_pdf(session, link)
+            transactions = parse_vlmo_pdf(pdf_bytes) if pdf_bytes else []
+            send_vlmo_notification(row, transactions)
+            processed.add(doc_hash)
+            new_records.append(row)
+            continue
+
         should_process, skip_reason = pre_filter(row)
         if not should_process:
             _log_skipped(row, skip_reason)
