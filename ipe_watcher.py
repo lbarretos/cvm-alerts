@@ -50,7 +50,7 @@ CATEGORIES = frozenset([
     "Aviso aos Acionistas",
 ])
 
-VLMO_CATEGORY = "Valores Mobiliários negociados e detidos (art. 11 da Instr. CVM nº 358)"
+VLMO_CATEGORY = "Valores Mobiliários Negociados e Detidos"
 ALL_WATCHED_CATEGORIES = CATEGORIES | {VLMO_CATEGORY}
 
 # ── VLMO PDF parsing patterns ───────────────────────────────────────────────────
