@@ -1,9 +1,9 @@
-name: Daily CVM Pipeline
+name: CVM Weekly VLMO Pipeline
 
 on:
   schedule:
-    # Runs at 22:00 UTC on days 1–12 of every month
-    - cron: '0 22 1-12 * *'
+    # Segunda-feira 09:00 BRT (12:00 UTC) — após batch semanal da CVM (~08:00 BRT)
+    - cron: '0 12 * * 1'
   workflow_dispatch:
 
 permissions:

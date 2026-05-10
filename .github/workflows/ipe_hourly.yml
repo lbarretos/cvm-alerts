@@ -1,9 +1,9 @@
-name: IPE Hourly Watcher
+name: B3 IPE & VLMO Monitor
 
 on:
   schedule:
-    # 06h, 09h, 12h, 18h BRT (09h, 12h, 15h, 21h UTC) — seg a sex
-    - cron: '0 9,12,15,21 * * 1-5'
+    # 06h, 09h, 12h, 15h, 18h BRT (09h, 12h, 15h, 18h, 21h UTC) — seg a sex
+    - cron: '0 9,12,15,18,21 * * 1-5'
     # 20h59 BRT (23h59 UTC) — seg a sex
     - cron: '59 23 * * 1-5'
   workflow_dispatch:
