@@ -311,6 +311,28 @@ def _parse_brl_number(s: str) -> float:
     return float(s.strip().replace(".", "").replace(",", "."))
 
 
+def _infer_pos_type(pos_type: str, asset: str) -> str:
+    """Return position type, inferring from asset name when pos_type is empty."""
+    if pos_type:
+        return pos_type
+    asset_up = asset.upper()
+    if "RECOMPRA" in asset_up:
+        return "Recompra"
+    if "SUBSCRI" in asset_up:
+        return "Subscrição"
+    return "Outros"
+
+
+def _format_amount(v: float) -> str:
+    """Format BRL amount compactly: R$ 1.4M, R$ 500K, R$ 13K."""
+    abs_v = abs(v)
+    if abs_v >= 1_000_000:
+        return f"R$ {abs_v / 1_000_000:.1f}M"
+    if abs_v >= 1_000:
+        return f"R$ {abs_v / 1_000:.0f}K"
+    return f"R$ {abs_v:,.0f}"
+
+
 def _parse_vlmo_page(text: str) -> list[dict]:
     """Parse one VLMO PDF page into a list of transaction dicts."""
     lines = [l.rstrip() for l in text.splitlines()]
@@ -358,7 +380,7 @@ def _parse_vlmo_page(text: str) -> list[dict]:
                     pending_op = ""
                     continue
                 transactions.append({
-                    "position_type": pos_type or "N/A",
+                    "position_type": _infer_pos_type(pos_type, asset),
                     "operation_type": op_type,
                     "asset":          asset,
                     "day":            int(day_str),
@@ -433,38 +455,54 @@ def send_notification(row: pd.Series, summary: str | None) -> None:
     send_message(msg)
 
 
-def send_vlmo_notification(row: pd.Series, transactions: list[dict]) -> None:
-    """Send Telegram alert for a new VLMO filing."""
-    company = row.get("DENOM_CIA", "")
-    dt      = row.get("DT_ENTREGA", "")
-    link    = row.get("LINK_DOC", "")
+def send_vlmo_batch_notification(vlmo_by_company: dict) -> None:
+    """Send ONE consolidated VLMO Telegram message for all companies in this run."""
+    if not vlmo_by_company:
+        return
 
-    ref_month = dt[:7] if dt else ""  # "2026-04"
-    if transactions:
-        lines = [f"📋 *VLMO — {company}*", f"_{ref_month}_", ""]
-        for txn in transactions[:5]:
-            pos = txn.get("position_type", "N/A")
-            op  = txn.get("operation_type", "N/A")
-            qty = int(txn.get("quantity", 0))
-            vol = txn.get("volume", 0.0)
-            asset = txn.get("asset", "")
-            asset_part = f" ({asset})" if asset else ""
-            lines.append(
-                f"• *{pos}*{asset_part}\n"
-                f"  {op} · {qty:,} ações · R$ {abs(vol):,.0f}"
-            )
-        if len(transactions) > 5:
-            lines.append(f"_...e mais {len(transactions) - 5} operações_")
-        lines.extend(["", f"[Ver documento]({link})"])
-        msg = "\n".join(lines)
-    else:
-        msg = (
-            f"📋 *VLMO — {company}*\n"
-            f"_{ref_month}_ · sem transações identificadas\n\n"
-            f"[Ver documento]({link})"
-        )
+    ref_month = next(iter(vlmo_by_company.values())).get("ref_month", "")
+    try:
+        month_label = datetime.strptime(ref_month, "%Y-%m").strftime("%B/%Y")
+    except (ValueError, TypeError):
+        month_label = ref_month or "—"
 
-    send_message(msg)
+    today_brt = datetime.now(ZoneInfo("America/Sao_Paulo"))
+    month_abbrs = ["jan", "fev", "mar", "abr", "mai", "jun",
+                   "jul", "ago", "set", "out", "nov", "dez"]
+    today_str = f"{today_brt.day}-{month_abbrs[today_brt.month - 1]}"
+
+    lines: list[str] = [f"*Atualização VLMO — {month_label} ({today_str})*", ""]
+
+    for ccvm, data in vlmo_by_company.items():
+        ticker = data["ticker"]
+        denom = data["denom"]
+        transactions = data.get("transactions", [])
+        primary_link = data.get("primary_link", "")
+
+        link_part = f", [doc]({primary_link})" if primary_link else ""
+        company_header = f"• {ticker} ({denom}{link_part})"
+
+        if not transactions:
+            lines.append(company_header + ": sem transações")
+            continue
+
+        lines.append(company_header + ":")
+
+        groups: dict[tuple, float] = {}
+        group_counts: dict[tuple, int] = {}
+        for txn in transactions:
+            pos = txn.get("position_type", "Outros")
+            op = txn.get("operation_type", "—").title()
+            key = (pos, op)
+            groups[key] = groups.get(key, 0.0) + txn.get("volume", 0.0)
+            group_counts[key] = group_counts.get(key, 0) + 1
+
+        for (pos, op), total_vol in groups.items():
+            count = group_counts[(pos, op)]
+            count_str = f" ({count}x)" if count > 1 else ""
+            lines.append(f"  · {pos} · {op} · {_format_amount(total_vol)}{count_str}")
+
+    send_message("\n".join(lines))
 
 
 # ── Git commit-back ───────────────────────────────────────────────────────────
@@ -509,6 +547,7 @@ def main() -> None:
                       for i in range(1, days_back + 1)] or [today]
     valid_date_strs = {d.isoformat() for d in query_dates}
     new_records    = []
+    vlmo_by_company: dict[str, dict] = {}
 
     logger.info("Querying %d date(s): %s", len(query_dates),
                 ", ".join(d.isoformat() for d in query_dates))
@@ -567,7 +606,21 @@ def main() -> None:
                 time.sleep(2)
                 pdf_bytes = download_pdf(session, link)
             transactions = parse_vlmo_pdf(pdf_bytes) if pdf_bytes else []
-            send_vlmo_notification(row, transactions)
+
+            ccvm_key = str(row.get("ccvm", ""))
+            dt_val = str(row.get("DT_ENTREGA", ""))
+            if ccvm_key not in vlmo_by_company:
+                vlmo_by_company[ccvm_key] = {
+                    "ticker":       company_map[ccvm_key]["ticker"],
+                    "denom":        str(row.get("DENOM_CIA", "")),
+                    "ref_month":    dt_val[:7] if dt_val else "",
+                    "transactions": [],
+                    "primary_link": "",
+                }
+            vlmo_by_company[ccvm_key]["transactions"].extend(transactions)
+            if link and (transactions or not vlmo_by_company[ccvm_key]["primary_link"]):
+                vlmo_by_company[ccvm_key]["primary_link"] = link
+
             processed.add(doc_hash)
             new_records.append(row)
             continue
@@ -601,6 +654,9 @@ def main() -> None:
         send_notification(row, summary)
         processed.add(doc_hash)
         new_records.append(row)
+
+    if vlmo_by_company:
+        send_vlmo_batch_notification(vlmo_by_company)
 
     save_processed_ids(processed)
     save_last_run_date(today)

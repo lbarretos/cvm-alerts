@@ -547,63 +547,74 @@ def test_parse_vlmo_pdf_returns_empty_on_exception():
     assert result == []
 
 
-# ── VLMO: send_vlmo_notification ─────────────────────────────────────────────
+# ── VLMO: send_vlmo_batch_notification ───────────────────────────────────────
 
-def test_send_vlmo_notification_with_transactions():
-    row = pd.Series({
-        "DENOM_CIA":   "TEST CO",
-        "DT_ENTREGA":  "2026-04-22",
-        "LINK_DOC":    "http://example.com/vlmo.pdf",
-    })
-    txns = [{
-        "position_type": "Diretor ou Vinculado",
-        "operation_type": "Compra à vista",
-        "asset":          "Ações ON",
-        "day":            5,
-        "quantity":       1000.0,
-        "unit_price":     50.0,
-        "volume":         50000.0,
-    }]
+def test_send_vlmo_batch_with_transactions():
+    vlmo_by_company = {
+        "24392": {
+            "ticker":       "TEST3",
+            "denom":        "TEST CO",
+            "ref_month":    "2026-04",
+            "primary_link": "http://example.com/vlmo.pdf",
+            "transactions": [{
+                "position_type": "Diretor ou Vinculado",
+                "operation_type": "Compra à vista",
+                "asset":          "Ações ON",
+                "volume":         50000.0,
+            }],
+        }
+    }
     with patch("ipe_watcher.send_message") as mock_send:
-        ipe_watcher.send_vlmo_notification(row, txns)
+        ipe_watcher.send_vlmo_batch_notification(vlmo_by_company)
         mock_send.assert_called_once()
         msg = mock_send.call_args[0][0]
         assert "TEST CO" in msg
         assert "Diretor" in msg
         assert "Compra" in msg
-        assert "50,000" in msg
+        assert "50K" in msg
 
 
-def test_send_vlmo_notification_empty_transactions():
-    row = pd.Series({
-        "DENOM_CIA":  "TEST CO",
-        "DT_ENTREGA": "2026-04-22",
-        "LINK_DOC":   "http://example.com/vlmo.pdf",
-    })
+def test_send_vlmo_batch_empty_transactions():
+    vlmo_by_company = {
+        "24392": {
+            "ticker":       "TEST3",
+            "denom":        "TEST CO",
+            "ref_month":    "2026-04",
+            "primary_link": "http://example.com/vlmo.pdf",
+            "transactions": [],
+        }
+    }
     with patch("ipe_watcher.send_message") as mock_send:
-        ipe_watcher.send_vlmo_notification(row, [])
+        ipe_watcher.send_vlmo_batch_notification(vlmo_by_company)
         mock_send.assert_called_once()
         msg = mock_send.call_args[0][0]
         assert "TEST CO" in msg
         assert "sem transações" in msg.lower()
 
 
-def test_send_vlmo_notification_caps_at_five_transactions():
-    row = pd.Series({"DENOM_CIA": "CO", "DT_ENTREGA": "2026-04-22", "LINK_DOC": "http://x"})
+def test_send_vlmo_batch_aggregates_same_type():
     txns = [
-        {"position_type": "Diretor ou Vinculado", "operation_type": "Compra", "volume": i * 1000.0}
-        for i in range(8)
+        {"position_type": "Recompra", "operation_type": "Compra", "volume": 500_000.0},
+        {"position_type": "Recompra", "operation_type": "Compra", "volume": 700_000.0},
+        {"position_type": "Recompra", "operation_type": "Compra", "volume": 300_000.0},
     ]
+    vlmo_by_company = {
+        "24392": {
+            "ticker": "CO3", "denom": "CO", "ref_month": "2026-04",
+            "primary_link": "http://x", "transactions": txns,
+        }
+    }
     with patch("ipe_watcher.send_message") as mock_send:
-        ipe_watcher.send_vlmo_notification(row, txns)
+        ipe_watcher.send_vlmo_batch_notification(vlmo_by_company)
         msg = mock_send.call_args[0][0]
-        assert "3 operações" in msg
+        assert "(3x)" in msg
+        assert "1.5M" in msg
 
 
 # ── VLMO: integration in main() ──────────────────────────────────────────────
 
 def test_main_processes_vlmo_document(tmp_path, monkeypatch):
-    """main() routes VLMO to parse_vlmo_pdf + send_vlmo_notification, skips LLM."""
+    """main() routes VLMO to parse_vlmo_pdf + send_vlmo_batch_notification, skips LLM."""
     monkeypatch.setattr(ipe_watcher, "PROCESSED_IDS_FILE",  tmp_path / "ids.json")
     monkeypatch.setattr(ipe_watcher, "SKIPPED_LOG_FILE",    tmp_path / "skipped.csv")
     monkeypatch.setattr(ipe_watcher, "INDEX_LATEST_FILE",   tmp_path / "latest.csv")
@@ -644,15 +655,15 @@ def test_main_processes_vlmo_document(tmp_path, monkeypatch):
     }]
 
     with (
-        patch("ipe_watcher.download_ipe_b3",       return_value=fake_df),
-        patch("ipe_watcher.load_company_map",       return_value=fake_company_map),
-        patch("ipe_watcher.download_pdf",           return_value=b"%PDF-fake"),
-        patch("ipe_watcher.parse_vlmo_pdf",         return_value=fake_txns),
-        patch("ipe_watcher.send_vlmo_notification") as mock_vlmo_notify,
-        patch("ipe_watcher.call_llm")               as mock_llm,
-        patch("ipe_watcher.send_notification")      as mock_notify,
+        patch("ipe_watcher.download_ipe_b3",              return_value=fake_df),
+        patch("ipe_watcher.load_company_map",              return_value=fake_company_map),
+        patch("ipe_watcher.download_pdf",                  return_value=b"%PDF-fake"),
+        patch("ipe_watcher.parse_vlmo_pdf",                return_value=fake_txns),
+        patch("ipe_watcher.send_vlmo_batch_notification") as mock_vlmo_notify,
+        patch("ipe_watcher.call_llm")                      as mock_llm,
+        patch("ipe_watcher.send_notification")             as mock_notify,
         patch("ipe_watcher.git_commit_back"),
-        patch("ipe_watcher.create_session",         return_value=MagicMock()),
+        patch("ipe_watcher.create_session",                return_value=MagicMock()),
     ):
         ipe_watcher.main()
 
