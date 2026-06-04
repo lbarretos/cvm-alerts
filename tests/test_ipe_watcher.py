@@ -72,8 +72,69 @@ def test_download_ipe_b3_raises_on_api_error(monkeypatch):
     mock_session = MagicMock()
     mock_session.post.return_value = mock_resp
 
-    with pytest.raises(RuntimeError, match="LOGIN INCORRETO"):
+    # LOGIN INCORRETO must raise CredentialError (subclass of RuntimeError)
+    with pytest.raises(ipe_watcher.CredentialError, match="LOGIN INCORRETO"):
         ipe_watcher.download_ipe_b3(mock_session, date(2026, 4, 22))
+
+
+def _make_credential_error_session(desc: str) -> MagicMock:
+    """Return a mock session that replies with a B3 credential error XML."""
+    error_xml = (
+        b'<?xml version="1.0" encoding="ISO-8859-1" ?>'
+        b"<ERROS>"
+        b"<NUMERO_DO_ERRO>1</NUMERO_DO_ERRO>"
+        b"<DESCRICAO_DO_ERRO>" + desc.encode("iso-8859-1") + b"</DESCRICAO_DO_ERRO>"
+        b"</ERROS>"
+    )
+    mock_resp = MagicMock()
+    mock_resp.content = error_xml
+    mock_resp.raise_for_status = MagicMock()
+    mock_session = MagicMock()
+    mock_session.post.return_value = mock_resp
+    return mock_session
+
+
+@pytest.mark.parametrize("desc", ["SENHA EXPIRADA", "LOGIN INCORRETO"])
+def test_credential_errors_raise_credential_error(monkeypatch, desc):
+    """download_ipe_b3 raises CredentialError (not plain RuntimeError) for
+    permanent credential failures so callers can distinguish them from
+    transient network errors."""
+    import ipe_watcher
+    monkeypatch.setenv("CVM_USERNAME", "testuser")
+    monkeypatch.setenv("CVM_PASSWORD", "testpass")
+
+    with pytest.raises(ipe_watcher.CredentialError, match=desc):
+        ipe_watcher.download_ipe_b3(
+            _make_credential_error_session(desc), date(2026, 4, 22)
+        )
+
+
+def test_main_exits_nonzero_on_credential_error(monkeypatch):
+    """main() must call sys.exit(1) and send a Telegram alert when the B3 API
+    returns a permanent credential error.  A transient network error on one
+    date must NOT trigger exit(1)."""
+    import ipe_watcher
+
+    monkeypatch.setenv("CVM_USERNAME", "testuser")
+    monkeypatch.setenv("CVM_PASSWORD", "testpass")
+
+    telegram_calls: list[str] = []
+
+    def fake_send_message(text, **_):
+        telegram_calls.append(text)
+
+    def fake_download_raises_credential(_session, _date):
+        raise ipe_watcher.CredentialError("SENHA EXPIRADA")
+
+    monkeypatch.setattr(ipe_watcher, "download_ipe_b3", fake_download_raises_credential)
+    monkeypatch.setattr(ipe_watcher, "send_message", fake_send_message)
+
+    with pytest.raises(SystemExit) as exc_info:
+        ipe_watcher.main()
+
+    assert exc_info.value.code == 1, "main() must exit with code 1 on credential error"
+    assert telegram_calls, "main() must send a Telegram alert on credential error"
+    assert "credential" in telegram_calls[0].lower() or "credencial" in telegram_calls[0].lower()
 
 
 # ── Task 7: pre_filter ────────────────────────────────────────────────────────

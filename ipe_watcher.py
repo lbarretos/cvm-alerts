@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import time
 import zipfile
 import xml.etree.ElementTree as ET
@@ -28,6 +29,15 @@ from telegram_notifier import send_message
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
+
+class CredentialError(RuntimeError):
+    """Raised when the B3 API rejects the CVM credentials permanently.
+
+    Unlike transient network errors, credential failures will not recover
+    on retry — the run should exit non-zero immediately so GitHub Actions
+    (and the operator) are notified.
+    """
+
 # ── Paths ──────────────────────────────────────────────────────────────────────
 PROCESSED_IDS_FILE  = Path("datasets/ipe_processed_ids.json")
 LAST_RUN_DATE_FILE  = Path("datasets/ipe_last_run_date.txt")
@@ -37,6 +47,10 @@ CNPJ_MAP_FILE      = Path("config/cnpj_map.yaml")
 SYSTEM_PROMPT_FILE = Path("config/system_prompt_ipe.txt")
 
 B3_API_URL = "https://seguro.bmfbovespa.com.br/rad/download/SolicitaDownload.asp"
+
+# B3 API error descriptions that indicate permanent credential failure.
+# These will never recover on retry — the run must fail immediately.
+B3_CREDENTIAL_ERRORS = {"SENHA EXPIRADA", "LOGIN INCORRETO"}
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -136,7 +150,10 @@ def download_ipe_b3(session, query_date: date) -> pd.DataFrame:
     if root.tag == "ERROS":
         code = root.findtext("NUMERO_DO_ERRO", "")
         desc = root.findtext("DESCRICAO_DO_ERRO", "")
-        raise RuntimeError(f"B3 API error {code}: {desc}")
+        exc = RuntimeError(f"B3 API error {code}: {desc}")
+        if desc.strip() in B3_CREDENTIAL_ERRORS:
+            raise CredentialError(desc.strip()) from exc
+        raise exc
 
     rows = []
     for link in root.findall("Link"):
@@ -556,6 +573,20 @@ def main() -> None:
     for qd in query_dates:
         try:
             frames.append(download_ipe_b3(session, qd))
+        except CredentialError as exc:
+            # Permanent failure — no point retrying other dates.
+            msg = (
+                f"🚨 *CVM-Alerts parou*: credencial B3 inválida\n"
+                f"Erro: `{exc}`\n"
+                f"Ação: renovar senha em conteudo.cvm.gov.br ou contatar "
+                f"suporteexterno@cvm.gov.br"
+            )
+            logger.critical("Credential error — aborting run: %s", exc)
+            try:
+                send_message(msg)
+            except Exception:
+                pass  # best-effort; don't mask the credential error
+            sys.exit(1)
         except Exception as exc:
             logger.error("Failed to query B3 API for %s: %s", qd, exc)
 
