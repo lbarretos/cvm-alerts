@@ -30,8 +30,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 
-class CredentialError(RuntimeError):
+class CredentialError(Exception):
     """Raised when the B3 API rejects the CVM credentials permanently.
+
+    Extends Exception (not RuntimeError) so a bare ``except RuntimeError``
+    cannot accidentally swallow it — it must be caught explicitly.
 
     Unlike transient network errors, credential failures will not recover
     on retry — the run should exit non-zero immediately so GitHub Actions
@@ -49,6 +52,7 @@ SYSTEM_PROMPT_FILE = Path("config/system_prompt_ipe.txt")
 B3_API_URL = "https://seguro.bmfbovespa.com.br/rad/download/SolicitaDownload.asp"
 
 # B3 API error descriptions that indicate permanent credential failure.
+# Stored uppercased; comparison uses .upper() to tolerate B3 casing variants.
 # These will never recover on retry — the run must fail immediately.
 B3_CREDENTIAL_ERRORS = {"SENHA EXPIRADA", "LOGIN INCORRETO"}
 USER_AGENT = (
@@ -151,7 +155,7 @@ def download_ipe_b3(session, query_date: date) -> pd.DataFrame:
         code = root.findtext("NUMERO_DO_ERRO", "")
         desc = root.findtext("DESCRICAO_DO_ERRO", "")
         exc = RuntimeError(f"B3 API error {code}: {desc}")
-        if desc.strip() in B3_CREDENTIAL_ERRORS:
+        if desc.strip().upper() in B3_CREDENTIAL_ERRORS:
             raise CredentialError(desc.strip()) from exc
         raise exc
 

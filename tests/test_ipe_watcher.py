@@ -137,6 +137,69 @@ def test_main_exits_nonzero_on_credential_error(monkeypatch):
     assert "credential" in telegram_calls[0].lower() or "credencial" in telegram_calls[0].lower()
 
 
+def test_non_credential_b3_error_raises_runtime_error(monkeypatch):
+    """download_ipe_b3 raises plain RuntimeError (not CredentialError) for
+    non-permanent B3 API errors like 'SISTEMA INDISPONIVEL'."""
+    import ipe_watcher
+    monkeypatch.setenv("CVM_USERNAME", "testuser")
+    monkeypatch.setenv("CVM_PASSWORD", "testpass")
+
+    error_xml = (
+        b'<?xml version="1.0" encoding="ISO-8859-1" ?>'
+        b"<ERROS>"
+        b"<NUMERO_DO_ERRO>99</NUMERO_DO_ERRO>"
+        b"<DESCRICAO_DO_ERRO>SISTEMA INDISPONIVEL</DESCRICAO_DO_ERRO>"
+        b"</ERROS>"
+    )
+    mock_resp = MagicMock()
+    mock_resp.content = error_xml
+    mock_resp.raise_for_status = MagicMock()
+    mock_session = MagicMock()
+    mock_session.post.return_value = mock_resp
+
+    # Must be RuntimeError but NOT CredentialError (pytest.raises already confirms type)
+    with pytest.raises(RuntimeError, match="SISTEMA INDISPONIVEL") as exc_info:
+        ipe_watcher.download_ipe_b3(mock_session, date(2026, 4, 22))
+
+    assert type(exc_info.value) is RuntimeError, "must be plain RuntimeError, not CredentialError subclass"
+
+
+def test_credential_error_tolerates_surrounding_whitespace(monkeypatch):
+    """B3 error descriptions may have leading/trailing whitespace; the strip()
+    call in download_ipe_b3 must still match against B3_CREDENTIAL_ERRORS."""
+    import ipe_watcher
+    monkeypatch.setenv("CVM_USERNAME", "testuser")
+    monkeypatch.setenv("CVM_PASSWORD", "testpass")
+
+    with pytest.raises(ipe_watcher.CredentialError):
+        ipe_watcher.download_ipe_b3(
+            _make_credential_error_session(" SENHA EXPIRADA "), date(2026, 4, 22)
+        )
+
+
+def test_main_exits_nonzero_even_when_telegram_fails(monkeypatch):
+    """main() must still call sys.exit(1) even if send_message() raises while
+    handling a CredentialError (best-effort Telegram alert)."""
+    import ipe_watcher
+
+    monkeypatch.setenv("CVM_USERNAME", "testuser")
+    monkeypatch.setenv("CVM_PASSWORD", "testpass")
+
+    def fake_download_raises_credential(_session, _date):
+        raise ipe_watcher.CredentialError("SENHA EXPIRADA")
+
+    def fake_send_message_fails(text, **_):
+        raise OSError("Telegram unreachable")
+
+    monkeypatch.setattr(ipe_watcher, "download_ipe_b3", fake_download_raises_credential)
+    monkeypatch.setattr(ipe_watcher, "send_message", fake_send_message_fails)
+
+    with pytest.raises(SystemExit) as exc_info:
+        ipe_watcher.main()
+
+    assert exc_info.value.code == 1, "sys.exit(1) must fire even when Telegram is down"
+
+
 # ── Task 7: pre_filter ────────────────────────────────────────────────────────
 
 import ipe_watcher
