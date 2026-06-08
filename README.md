@@ -19,7 +19,7 @@ Vá para **Settings → Secrets and variables → Actions** e adicione:
 | Secret | Valor | Onde Obter |
 |--------|-------|-----------|
 | `CVM_USERNAME` | Login CVM | Solicite em [conteudo.cvm.gov.br](https://conteudo.cvm.gov.br/menu/regulados/companhias/download_multiplo/) |
-| `CVM_PASSWORD` | Senha CVM | Mesmo email da solicitação |
+| `CVM_PASSWORD` | Senha CVM | Mesmo portal — a senha expira periodicamente; veja **Renovação de Senha** abaixo |
 | `TELEGRAM_BOT_TOKEN` | Token do bot Telegram | `@BotFather` no Telegram |
 | `TELEGRAM_CHAT_ID` | ID do chat | `@userinfobot` no Telegram |
 | `DEEPSEEK_API_KEY` | API key Deepseek | [platform.deepseek.com](https://platform.deepseek.com) |
@@ -94,6 +94,22 @@ Edite `ipe_watcher.py` linha ~268 (`send_notification`) para adicionar Slack, Di
 - **Telegram Bot** (criar com `@BotFather`)
 - **Deepseek API** (free tier funciona)
 
+## 🔑 Renovação de Senha CVM
+
+A senha B3/CVM expira periodicamente. Quando isso acontece:
+
+1. O workflow fica **vermelho** no GitHub Actions (exit code 1)
+2. Você recebe alerta Telegram: _"🚨 CVM-Alerts parou: credencial B3 inválida"_
+
+**Para renovar:**
+- E-mail: `suporteexterno@cvm.gov.br`
+- Telefone: `0800-944-3535`
+
+Após receber a nova senha, atualize o Secret `CVM_PASSWORD` em **Settings → Secrets**.
+
+> **Nota:** os sistemas da CVM ficam offline para manutenção alguns dias por ano.
+> Verifique avisos em [gov.br/cvm](https://www.gov.br/cvm/pt-br) antes de acionar o suporte.
+
 ## 📝 Logs e Debugging
 
 Veja os logs no GitHub Actions:
@@ -102,7 +118,7 @@ Veja os logs no GitHub Actions:
 
 Localmente:
 ```bash
-python ipe_watcher.py  # roda uma vez com env vars setadas
+CVM_USERNAME=seu_login CVM_PASSWORD=sua_senha python ipe_watcher.py
 ```
 
 ## 🔒 Segurança

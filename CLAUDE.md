@@ -26,7 +26,7 @@ Processados ↓
 
 | Função | Responsabilidade | Customizável |
 |--------|------------------|--------------|
-| `download_ipe_b3()` | Query B3 API, parse XML, enrich | Não (precisa de credenciais) |
+| `download_ipe_b3()` | Query B3 API, parse XML, enrich. Levanta `CredentialError` em SENHA EXPIRADA/LOGIN INCORRETO | Não (precisa de credenciais) |
 | `load_company_map()` | Ler ccvm/CNPJ/denom do config | Sim (YAML) |
 | `pre_filter()` | Regras de skip (AGO/AGE, dividendos) | Sim (adicione keywords) |
 | `make_hash()` | SHA256 de CNPJ\|DT\|TIPO\|LINK | Não |
@@ -201,9 +201,18 @@ INFO Done. Processed 1 new documents.
 
 Credenciais não passadas. Verifique GitHub Secrets.
 
-### "LOGIN INCORRETO" (erro 1 da B3)
+### "SENHA EXPIRADA" ou "LOGIN INCORRETO" (erro 1 da B3)
 
-Credenciais CVM inválidas. Solicite novamente em conteudo.cvm.gov.br.
+Credenciais CVM permanentemente inválidas. O watcher **para imediatamente** com
+`sys.exit(1)` (GitHub Actions fica ❌ vermelho) e envia alerta Telegram.
+
+Para renovar:
+1. E-mail: `suporteexterno@cvm.gov.br` | Telefone: `0800-944-3535`
+2. Após receber nova senha, atualize o GitHub Secret `CVM_PASSWORD`
+
+> ⚠️ Os sistemas CVM ficam offline para manutenção periodicamente (verificar
+> aviso em gov.br/cvm). Durante a janela de manutenção, aguardar normalização
+> antes de contatar o suporte.
 
 ### "0 rows after category+ccvm filter"
 
