@@ -94,21 +94,27 @@ Edite `ipe_watcher.py` linha ~268 (`send_notification`) para adicionar Slack, Di
 - **Telegram Bot** (criar com `@BotFather`)
 - **Deepseek API** (free tier funciona)
 
-## 🔑 Renovação de Senha CVM
+## 🔑 Problemas de Credencial CVM
 
-A senha B3/CVM expira periodicamente. Quando isso acontece:
+Três erros B3 causam **workflow vermelho ❌ + alerta Telegram** imediatos:
 
-1. O workflow fica **vermelho** no GitHub Actions (exit code 1)
-2. Você recebe alerta Telegram: _"🚨 CVM-Alerts parou: credencial B3 inválida"_
+| Erro B3 | Causa | Solução |
+|---------|-------|---------|
+| `SENHA EXPIRADA` | Senha venceu | Renovar senha (ver abaixo) |
+| `LOGIN INCORRETO` | Senha errada no Secret | Corrigir `CVM_PASSWORD` no Secret |
+| `USUÁRIO SUSPENSO` | Conta bloqueada após muitas tentativas | Contatar suporte para desbloquear |
 
-**Para renovar:**
+**Para renovar senha ou desbloquear conta:**
 - E-mail: `suporteexterno@cvm.gov.br`
 - Telefone: `0800-944-3535`
 
-Após receber a nova senha, atualize o Secret `CVM_PASSWORD` em **Settings → Secrets**.
+Após resolver, atualize o Secret `CVM_PASSWORD` em **Settings → Secrets**.
 
 > **Nota:** os sistemas da CVM ficam offline para manutenção alguns dias por ano.
 > Verifique avisos em [gov.br/cvm](https://www.gov.br/cvm/pt-br) antes de acionar o suporte.
+>
+> **Atenção:** ao renovar senha após expiração prolongada, a B3 pode suspender a conta
+> por excesso de tentativas. Neste caso, contate o suporte pedindo também o desbloqueio.
 
 ## 📝 Logs e Debugging
 

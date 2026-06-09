@@ -51,10 +51,11 @@ SYSTEM_PROMPT_FILE = Path("config/system_prompt_ipe.txt")
 
 B3_API_URL = "https://seguro.bmfbovespa.com.br/rad/download/SolicitaDownload.asp"
 
-# B3 API error descriptions that indicate permanent credential failure.
+# B3 API error descriptions that indicate permanent credential/access failure.
 # Stored uppercased; comparison uses .upper() to tolerate B3 casing variants.
 # These will never recover on retry — the run must fail immediately.
-B3_CREDENTIAL_ERRORS = {"SENHA EXPIRADA", "LOGIN INCORRETO"}
+# USUÁRIO SUSPENSO: conta bloqueada pela B3 após muitas tentativas com senha errada.
+B3_CREDENTIAL_ERRORS = {"SENHA EXPIRADA", "LOGIN INCORRETO", "USUÁRIO SUSPENSO"}
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "

@@ -94,7 +94,7 @@ def _make_credential_error_session(desc: str) -> MagicMock:
     return mock_session
 
 
-@pytest.mark.parametrize("desc", ["SENHA EXPIRADA", "LOGIN INCORRETO"])
+@pytest.mark.parametrize("desc", ["SENHA EXPIRADA", "LOGIN INCORRETO", "USUÁRIO SUSPENSO"])
 def test_credential_errors_raise_credential_error(monkeypatch, desc):
     """download_ipe_b3 raises CredentialError (not plain RuntimeError) for
     permanent credential failures so callers can distinguish them from
