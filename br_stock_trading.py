@@ -3,12 +3,9 @@ import pandas as pd
 import requests
 import numpy as np
 from datetime import datetime
-import ssl
-import warnings
 from bs4 import BeautifulSoup
 from io import BytesIO
 import logging
-from urllib3.util.ssl_ import create_urllib3_context
 import re
 import os
 import tempfile
@@ -53,12 +50,6 @@ handler = logging.StreamHandler()
 handler.setFormatter(ColoredFormatter('%(message)s'))
 logger.addHandler(handler)
 
-# Suppress only the specific warning about unverified HTTPS requests
-warnings.filterwarnings('ignore', message='Unverified HTTPS request')
-
-# Suppress HTTPS verification warnings
-requests.packages.urllib3.disable_warnings()
-
 CACHE_DIR  = Path('.cache')
 ZIPS_DIR   = CACHE_DIR / 'zips'
 ETAGS_FILE = CACHE_DIR / 'etags.json'
@@ -77,19 +68,9 @@ def save_etags(etags: dict) -> None:
         json.dump(etags, f, indent=2)
 
 
-class TLSAdapter(HTTPAdapter):
-    def init_poolmanager(self, *args, **kwargs):
-        ctx = requests.packages.urllib3.util.ssl_.create_urllib3_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = 0
-        kwargs['ssl_context'] = ctx
-        return super(TLSAdapter, self).init_poolmanager(*args, **kwargs)
-
 def create_session():
     """Create a session with retry logic and connection pooling."""
     session = requests.Session()
-    session.mount('https://', TLSAdapter())
-    
     # Configure retry strategy
     retry_strategy = Retry(
         total=3,
@@ -118,7 +99,7 @@ def download_and_extract_zip(url, temp_dir, etags: dict, etags_lock: threading.L
 
         # HEAD request — cheap check before any GET
         try:
-            head = session.head(url, verify=False, timeout=10)
+            head = session.head(url, timeout=10)
             last_modified = head.headers.get('Last-Modified')
         except Exception:
             pass  # network issue → proceed with unconditional GET
@@ -134,7 +115,7 @@ def download_and_extract_zip(url, temp_dir, etags: dict, etags_lock: threading.L
             return csv_files, False
 
         # Cache miss: full download
-        response = session.get(url, verify=False)
+        response = session.get(url)
         response.raise_for_status()
 
         zip_bytes = response.content
@@ -260,7 +241,7 @@ def get_available_files(base_url):
     """Get list of available zip files from the CVM website."""
     try:
         session = create_session()
-        response = session.get(base_url, verify=False)
+        response = session.get(base_url)
         response.raise_for_status()
         
         # Parse HTML content
