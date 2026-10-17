@@ -19,10 +19,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.11'
 
@@ -48,6 +48,18 @@ jobs:
           fi
           echo "No hardcoded credentials found."
 
+      - name: Scan tracked files for high-signal secret formats
+        # Covers every tracked text file (yaml, json, md, sh, ...), not just *.py.
+        run: |
+          HIGH='(ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|sk-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{30,}|[0-9]{8,10}:AA[A-Za-z0-9_-]{33}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'
+          MATCHES=$(git ls-files -z | grep -zvE '^(datasets|reports)/' | xargs -0 grep -InE "$HIGH" || true)
+          if [ -n "$MATCHES" ]; then
+            echo "::error::Possible secret detected in tracked files:"
+            echo "$MATCHES" | sed -E 's/(.{80}).*/\1.../'
+            exit 1
+          fi
+          echo "No high-signal secrets found."
+
   # ─────────────────────────────────────────────
   # 2. Pipeline – downloads, processes, alerts, reports
   # ─────────────────────────────────────────────
@@ -60,12 +72,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0   # full history so git diff works correctly
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.11'
           cache: pip
