@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # required for the auto-commit step
+  contents: read
 
 jobs:
   # ─────────────────────────────────────────────
@@ -55,6 +55,8 @@ jobs:
     name: Run CVM Pipeline
     needs: security
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # required for the auto-commit step
 
     steps:
       - name: Checkout
