@@ -1,6 +1,7 @@
 """Telegram alert dispatcher for CVM insider-trading alerts."""
 
 import os
+import re
 import logging
 import requests
 import pandas as pd
@@ -44,6 +45,43 @@ def _get_all_recipients() -> list[tuple[str, str]]:
     return recipients
 
 
+# ── Telegram (legacy Markdown) safety helpers ────────────────────────────────
+# Text that comes from outside (CVM/B3 feeds, PDFs summarised by an LLM) must
+# not be able to open formatting or inject clickable links into our alerts.
+
+_MD_SPECIAL = re.compile(r'([_*`\[])')
+_MD_LINK = re.compile(r'\[([^\]]*)\]\([^)]*\)')
+_BARE_URL = re.compile(r'(?i)\b(?:https?://|www\.)\S+')
+
+
+def md_escape(text) -> str:
+    """Escape the characters Telegram legacy Markdown treats as entities."""
+    return _MD_SPECIAL.sub(r'\\\1', str(text))
+
+
+def safe_url(url) -> str:
+    """Return an http(s) URL safe to place inside a Markdown ``(...)`` target, or ''."""
+    u = str(url or "").strip()
+    if not u.lower().startswith(("http://", "https://")):
+        return ""
+    return u.replace("(", "%28").replace(")", "%29").replace(" ", "%20")
+
+
+def sanitize_llm_summary(text, max_chars: int = 900) -> str:
+    """Neutralise LLM output before it is sent as a Markdown message.
+
+    Drops Markdown links and bare URLs (a prompt-injected PDF could otherwise
+    make the summary carry a phishing link), removes bold/underline markers,
+    caps the length and escapes remaining Markdown specials.
+    """
+    s = _MD_LINK.sub(r'\1', str(text))
+    s = _BARE_URL.sub('(link removido)', s)
+    s = s.replace('**', '').replace('__', '').strip()
+    if len(s) > max_chars:
+        s = s[: max_chars - 1].rstrip() + '…'
+    return md_escape(s)
+
+
 def _get_credentials() -> tuple[str, str]:
     """Read primary bot credentials from environment. Raises KeyError if absent."""
     return os.environ['TELEGRAM_BOT_TOKEN'], os.environ['TELEGRAM_CHAT_ID']
@@ -56,11 +94,11 @@ def _format_alert(row: pd.Series) -> str:
     except (ValueError, TypeError):
         qty = str(row['Quantity'])
     return (
-        f"*{row['priority']} - {row['Company_CNPJ']}*\n"
-        f"{row['Company_Name']}\n"
-        f"{pos_type}: {row['Operation_Type']} {qty} @ {row['Unit_Price']:.2f}\n"
+        f"*{md_escape(row['priority'])} - {md_escape(row['Company_CNPJ'])}*\n"
+        f"{md_escape(row['Company_Name'])}\n"
+        f"{md_escape(pos_type)}: {md_escape(row['Operation_Type'])} {md_escape(qty)} @ {row['Unit_Price']:.2f}\n"
         f"Volume: R$ {abs(row['Volume']):,.0f}\n"
-        f"Razão: {row['reason']}"
+        f"Razão: {md_escape(row['reason'])}"
     )
 
 
