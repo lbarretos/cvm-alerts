@@ -1,8 +1,9 @@
-# Cobertura P3 — empresas monitoradas para qualquer movimentação de insider.
+# Cobertura por setor (lista de referência). A lista que gera alertas é config/cnpj_map.yaml.
 #
 # Estrutura: setor → lista de tickers BZ.
 # ticker_map: mapeia cada ticker para o substring do Company_Name na base CVM
-# (case-insensitive). Usado pelo alerts.py para fazer o match.
+# (case-insensitive). Usado só por scripts/build_cnpj_map.py para achar CNPJs.
+# Os alertas usam config/cnpj_map.yaml (CNPJ, código CVM e nome).
 #
 # Sem registro CVM358 na base atual: VVEO3 (Viveo), RAIZ4 (Raízen).
 

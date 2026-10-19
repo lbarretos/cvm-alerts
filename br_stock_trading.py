@@ -1,18 +1,12 @@
 # Libraries
 import pandas as pd
 import requests
-import numpy as np
 from datetime import datetime
 from bs4 import BeautifulSoup
 from io import BytesIO
 import logging
-import re
-import os
 import tempfile
-import utils
 import concurrent.futures
-from functools import lru_cache
-import hashlib
 from pathlib import Path
 import time
 from requests.adapters import HTTPAdapter
@@ -21,7 +15,6 @@ import zipfile
 from reports.report_generator import ReportGenerator
 from colorama import init, Fore, Style
 import json
-import threading
 import alerts
 import telegram_notifier
 
@@ -50,24 +43,6 @@ logger.addHandler(handler)
 
 SUMMARY_STATE_FILE = Path('datasets/vlmo_summary_state.json')
 
-CACHE_DIR  = Path('.cache')
-ZIPS_DIR   = CACHE_DIR / 'zips'
-ETAGS_FILE = CACHE_DIR / 'etags.json'
-
-
-def load_etags() -> dict:
-    if ETAGS_FILE.exists():
-        with open(ETAGS_FILE, 'r') as f:
-            return json.load(f)
-    return {}
-
-
-def save_etags(etags: dict) -> None:
-    CACHE_DIR.mkdir(exist_ok=True)
-    with open(ETAGS_FILE, 'w') as f:
-        json.dump(etags, f, indent=2)
-
-
 def create_session():
     """Create a session with retry logic and connection pooling."""
     session = requests.Session()
@@ -85,53 +60,19 @@ def create_session():
     
     return session
 
-def download_and_extract_zip(url, temp_dir, etags: dict, etags_lock: threading.Lock):
-    """Download and extract a zip file, reusing local cache when Last-Modified is unchanged.
+def download_and_extract_zip(url, temp_dir):
+    """Download a zip file and extract its CSVs into temp_dir.
 
-    Returns (csv_files, was_downloaded) where was_downloaded=False means cache hit.
-    Falls back to full download if HEAD request fails.
+    The nine yearly zips total a few MB and download in ~3 s, so there is no
+    local cache (an ETag cache used to live here, but .cache/ was never
+    persisted between Actions runs, so it never hit).
     """
     try:
-        session = create_session()
-        filename = url.split('/')[-1]
-        cached_zip = ZIPS_DIR / filename
-        last_modified = None
-
-        # HEAD request — cheap check before any GET
-        try:
-            head = session.head(url, timeout=10)
-            last_modified = head.headers.get('Last-Modified')
-        except Exception:
-            pass  # network issue → proceed with unconditional GET
-
-        # Cache hit: same Last-Modified and zip already stored locally
-        if (last_modified
-                and url in etags
-                and etags[url] == last_modified
-                and cached_zip.exists()):
-            with zipfile.ZipFile(cached_zip) as zip_ref:
-                zip_ref.extractall(temp_dir)
-                csv_files = [temp_dir / f for f in zip_ref.namelist() if f.endswith('.csv')]
-            return csv_files, False
-
-        # Cache miss: full download
-        response = session.get(url)
+        response = create_session().get(url, timeout=60)
         response.raise_for_status()
-
-        zip_bytes = response.content
-        ZIPS_DIR.mkdir(parents=True, exist_ok=True)
-        cached_zip.write_bytes(zip_bytes)
-
-        with zipfile.ZipFile(BytesIO(zip_bytes)) as zip_ref:
+        with zipfile.ZipFile(BytesIO(response.content)) as zip_ref:
             zip_ref.extractall(temp_dir)
-            csv_files = [temp_dir / f for f in zip_ref.namelist() if f.endswith('.csv')]
-
-        if last_modified:
-            with etags_lock:
-                etags[url] = last_modified
-
-        return csv_files, True
-
+            return [temp_dir / f for f in zip_ref.namelist() if f.endswith('.csv')]
     except Exception as e:
         logger.error(f"Error downloading or extracting zip file: {str(e)}")
         raise
@@ -296,42 +237,24 @@ def main():
         zip_files = get_available_files(base_url)
         logger.info(f"📦 Found {len(zip_files)} zip files")
 
-        etags = load_etags()
-        etags_lock = threading.Lock()
-        ZIPS_DIR.mkdir(parents=True, exist_ok=True)
-        downloaded_count = 0
-        skipped_count = 0
-
         all_csv_files = []
         # Use ThreadPoolExecutor for parallel downloads
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            # Create future tasks for each zip file
             future_to_zip = {
-                executor.submit(download_and_extract_zip, base_url + zip_file, temp_dir, etags, etags_lock): zip_file
+                executor.submit(download_and_extract_zip, base_url + zip_file, temp_dir): zip_file
                 for zip_file in zip_files
             }
-
-            # Process completed downloads
             for future in concurrent.futures.as_completed(future_to_zip):
                 zip_file = future_to_zip[future]
                 try:
-                    csv_files, was_downloaded = future.result()
-                    all_csv_files.extend(csv_files)
-                    if was_downloaded:
-                        downloaded_count += 1
-                        logger.info(f"📥 Downloaded {zip_file}")
-                    else:
-                        skipped_count += 1
-                        logger.info(f"⏭️  Skipped {zip_file} (sem mudança)")
+                    all_csv_files.extend(future.result())
+                    logger.info(f"📥 Downloaded {zip_file}")
                 except Exception as e:
                     logger.error(f"❌ Error processing {zip_file}: {str(e)}")
-                    continue
 
-        save_etags(etags)
         download_time = time.time() - download_start
         logger.info(f"⏱️ Download time: {download_time:.2f} seconds")
-        logger.info(f"📊 Cache: {downloaded_count} baixado(s), {skipped_count} ignorado(s) (sem mudança)")
-        
+
         if not all_csv_files:
             raise Exception("❌ No CSV files were successfully downloaded and extracted")
         

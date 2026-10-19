@@ -1,0 +1,71 @@
+name: CVM Weekly VLMO Pipeline
+
+on:
+  schedule:
+    # Monday 09:07 BRT (12:07 UTC). Off the top of the hour, where scheduled
+    # runs get delayed the most.
+    - cron: '7 12 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # commits datasets/vlmo_summary_state.json and reports/
+
+jobs:
+  pipeline:
+    name: Run CVM Pipeline
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pipeline
+        env:
+          TELEGRAM_BOT_TOKEN:   ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:     ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_BOT_TOKEN_2: ${{ secrets.TELEGRAM_BOT_TOKEN_2 }}
+          TELEGRAM_CHAT_ID_2:   ${{ secrets.TELEGRAM_CHAT_ID_2 }}
+        run: python br_stock_trading.py
+
+      # The 20 MB consolidated CSV is published here instead of in git.
+      - name: Upload consolidated dataset
+        uses: actions/upload-artifact@v6
+        with:
+          name: vlmo-consolidated
+          path: datasets/Brazil_Stock_Trading_Consolidated.csv
+          retention-days: 90
+
+      - name: Commit summary state and reports
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          for f in datasets/vlmo_summary_state.json reports; do
+            [ -e "$f" ] && git add "$f"
+          done
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "chore: weekly VLMO state and report [$(date -u '+%Y-%m-%d %H:%M UTC')]"
+          git pull --rebase
+          git push
+
+      - name: Alert on failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          curl -sS -o /dev/null -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID%%,*}" \
+            --data-urlencode "text=⚠️ ${GITHUB_WORKFLOW} falhou: ${RUN_URL}"

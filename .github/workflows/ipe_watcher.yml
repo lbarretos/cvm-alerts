@@ -1,0 +1,99 @@
+name: B3 IPE & VLMO Monitor
+
+on:
+  schedule:
+    # Hourly 06h–20h BRT (09–23 UTC), Mon–Fri. Minute 17 avoids the
+    # top-of-the-hour queue, where scheduled runs get delayed the most.
+    - cron: '17 9-23 * * 1-5'
+    # 21h and 22h BRT fall on the next UTC day (00–01 UTC, Tue–Sat).
+    - cron: '17 0,1 * * 2-6'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # commits the dedup state under datasets/
+
+# Overlapping runs (manual dispatch + schedule) would race on the dedup state
+# and send duplicate alerts.
+concurrency:
+  group: ipe-watcher
+  cancel-in-progress: false
+
+jobs:
+  ipe-watcher:
+    name: Run IPE Watcher
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # full history so pull --rebase / push work
+
+      # Migration: until 2026-10 the processed IDs lived only in the Actions
+      # cache. Restore the last copy beside the git one; ipe_watcher.py merges
+      # both. Remove these two steps once a few weeks of runs have committed
+      # the merged file.
+      - name: Restore legacy processed IDs cache
+        uses: actions/cache/restore@v5
+        with:
+          path: datasets/ipe_processed_ids.json
+          key: ipe-processed-ids-legacy
+          restore-keys: ipe-processed-ids-
+
+      - name: Keep legacy cache beside the git copy
+        run: |
+          if ! git diff --quiet -- datasets/ipe_processed_ids.json; then
+            mv datasets/ipe_processed_ids.json datasets/ipe_processed_ids.cache.json
+            git checkout -- datasets/ipe_processed_ids.json
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run IPE watcher
+        env:
+          TELEGRAM_BOT_TOKEN:   ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:     ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_BOT_TOKEN_2: ${{ secrets.TELEGRAM_BOT_TOKEN_2 }}
+          TELEGRAM_CHAT_ID_2:   ${{ secrets.TELEGRAM_CHAT_ID_2 }}
+          DEEPSEEK_API_KEY:     ${{ secrets.DEEPSEEK_API_KEY }}
+          CVM_USERNAME:         ${{ secrets.CVM_USERNAME }}
+          CVM_PASSWORD:         ${{ secrets.CVM_PASSWORD }}
+        run: python ipe_watcher.py
+
+      # Runs even when the watcher exits 1 (a failed date, an undelivered
+      # alert): whatever was delivered must be recorded, or it is re-sent.
+      - name: Commit state
+        if: always()
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          for f in datasets/ipe_processed_ids.json datasets/ipe_last_run_date.txt datasets/ipe_skipped_log.csv; do
+            [ -f "$f" ] && git add "$f"
+          done
+          if git diff --cached --quiet; then
+            echo "No state changes."
+            exit 0
+          fi
+          git commit -m "ipe state $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git pull --rebase
+          git push
+
+      - name: Alert on failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # The watcher already alerted about this failure itself.
+          [ -f .alert_sent ] && exit 0
+          curl -sS -o /dev/null -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID%%,*}" \
+            --data-urlencode "text=⚠️ ${GITHUB_WORKFLOW} falhou: ${RUN_URL}"

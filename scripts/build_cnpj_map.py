@@ -1,4 +1,4 @@
-"""One-off script: fetch CVM company registry and build config/cnpj_map.yaml."""
+"""One-off helper: look up CNPJs for the tickers in config/coverage.yaml."""
 
 import re
 from io import StringIO
@@ -10,7 +10,9 @@ import yaml
 
 CAD_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/CAD/DADOS/cad_cia_aberta.csv"
 COVERAGE_YAML = Path("config/coverage.yaml")
-OUTPUT_YAML = Path("config/cnpj_map.yaml")
+# Writes a side file: config/cnpj_map.yaml also carries ccvm and denom, which
+# this script does not produce. Copy the CNPJs over by hand.
+OUTPUT_YAML = Path("config/cnpj_map.generated.yaml")
 
 
 def _normalize(s: str) -> str:
