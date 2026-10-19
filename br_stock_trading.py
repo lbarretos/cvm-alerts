@@ -20,10 +20,8 @@ from urllib3.util.retry import Retry
 import zipfile
 from reports.report_generator import ReportGenerator
 from colorama import init, Fore, Style
-import shutil
 import json
 import threading
-import delta
 import alerts
 import telegram_notifier
 
@@ -49,6 +47,8 @@ logger.setLevel(logging.INFO)
 handler = logging.StreamHandler()
 handler.setFormatter(ColoredFormatter('%(message)s'))
 logger.addHandler(handler)
+
+SUMMARY_STATE_FILE = Path('datasets/vlmo_summary_state.json')
 
 CACHE_DIR  = Path('.cache')
 ZIPS_DIR   = CACHE_DIR / 'zips'
@@ -216,13 +216,17 @@ def process_trading_data(csv_files):
             # Convert Version to numeric, replacing non-numeric versions with NaN
             combined_consolidated['Version'] = pd.to_numeric(combined_consolidated['Version'], errors='coerce')
             
-            # Group by key fields and get the latest version
-            key_fields = ['Reference_Date', 'Company_CNPJ', 'Company_Name', 'Movement_Date', 'Movement_Type']
+            # Each new version of a monthly form replaces the whole form: keep
+            # only the rows of the latest version per company and month.
+            # (A groupby().first() here used to merge distinct trades sharing
+            # date and movement type, mixing columns across rows, and kept
+            # rows of superseded versions.)
+            latest = (combined_consolidated
+                .groupby(['Company_CNPJ', 'Reference_Date'])['Version']
+                .transform('max'))
             combined_consolidated = (combined_consolidated
-                .sort_values(['Reference_Date', 'Version'], ascending=[True, False], kind='mergesort')
-                .groupby(key_fields, as_index=False)
-                .first()
-                .sort_values('Reference_Date', kind='mergesort')
+                [(combined_consolidated['Version'] == latest) | latest.isna()]
+                .sort_values(['Reference_Date', 'Company_CNPJ'], kind='mergesort')
                 .reset_index(drop=True))
             
             # Log version information
@@ -257,30 +261,22 @@ def ensure_datasets_dir():
     """Ensure the datasets directory exists and return its path."""
     datasets_dir = Path('datasets')
     datasets_dir.mkdir(exist_ok=True)
-    
-    # Create backup directory
-    backup_dir = datasets_dir / 'history'
-    backup_dir.mkdir(exist_ok=True)
-    
     return datasets_dir
 
-def backup_dataset(file_path, backup_dir):
-    """Create a backup of a dataset with timestamp."""
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    file_name = file_path.name
-    base_name = file_name.rsplit('.', 1)[0]
-    extension = file_name.rsplit('.', 1)[1]
-    backup_path = backup_dir / f"{base_name}_{timestamp}.{extension}"
-    
-    # Copy the file to backup
-    shutil.copy2(file_path, backup_path)
-    
-    # Keep only the last 5 backups for each dataset
-    pattern = f"{base_name}_*.{extension}"
-    backup_files = sorted(backup_dir.glob(pattern))
-    if len(backup_files) > 5:
-        for old_file in backup_files[:-5]:
-            old_file.unlink()
+
+def send_weekly_summary(consolidated_data: pd.DataFrame) -> None:
+    """Send the P1/P2 insider highlights of the coverage list, once per
+    company and reference month (again only if the figures change)."""
+    coverage = alerts.load_coverage_map()
+    state = alerts.load_state(SUMMARY_STATE_FILE)
+    header, blocks, new_state = alerts.weekly_summary(
+        consolidated_data, coverage, datetime.now().date(), state)
+    logger.info(f"🔔 Resumo semanal: {len(blocks)} empresa(s) nova(s) ou atualizada(s)")
+    if blocks and not telegram_notifier.send_blocks(header, blocks):
+        # Keep the old state so the next run retries delivery.
+        raise RuntimeError("Resumo semanal não entregue no Telegram")
+    alerts.save_state(SUMMARY_STATE_FILE, new_state)
+
 
 def main():
     """Main function to extract and process Brazilian stock trading data."""
@@ -347,38 +343,15 @@ def main():
         logger.info(f"⏱️ Processing time: {process_time:.2f} seconds")
         logger.info("✅ Data processing completed")
         
-        # Create datasets directory if it doesn't exist
         datasets_dir = ensure_datasets_dir()
-        backup_dir = datasets_dir / 'history'
-        
+
         # Save consolidated data
         if not consolidated_data.empty:
-            previous_backup = delta.latest_backup(backup_dir)
-
             output_path = datasets_dir / 'Brazil_Stock_Trading_Consolidated.csv'
             consolidated_data.to_csv(output_path, index=False, encoding='utf-8-sig')
             logger.info(f"💾 Saved Consolidated data to: {output_path}")
             logger.info(f"📊 Consolidated data shape: {consolidated_data.shape}")
-            backup_dataset(output_path, backup_dir)
-            logger.info(f"📚 Created backup of Consolidated data in: {backup_dir}")
-
-            # Compare the saved CSV (not in-memory) vs previous backup so that
-            # floating-point precision is consistent across both sides of the diff.
-            delta_df = delta.detect_new_records(
-                pd.read_csv(output_path, encoding='utf-8-sig'), previous_backup
-            )
-            delta_path = datasets_dir / 'delta_latest.csv'
-            delta_df.to_csv(delta_path, index=False, encoding='utf-8-sig')
-            logger.info(f"🆕 Delta: {len(delta_df)} novo(s) registro(s) → {delta_path}")
-
-            if not delta_df.empty:
-                coverage = alerts.load_coverage('config/coverage.yaml')
-                alerts_df = alerts.classify_alerts(delta_df, coverage)
-                prio_counts = alerts_df['priority'].value_counts().to_dict() if not alerts_df.empty else {}
-                logger.info(f"🔔 Alertas: {len(alerts_df)} {prio_counts}")
-                telegram_notifier.send_alerts(alerts_df)
-            else:
-                alerts_df = pd.DataFrame()
+            send_weekly_summary(consolidated_data)
 
         # Generate and print report
         logger.info("📈 Generating reports...")

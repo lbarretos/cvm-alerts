@@ -674,6 +674,11 @@ def test_parse_vlmo_pdf_returns_empty_on_exception():
 
 # ── VLMO: send_vlmo_batch_notification ───────────────────────────────────────
 
+def _sent_text(mock_blocks) -> str:
+    header, blocks = mock_blocks.call_args[0]
+    return header + "\n\n".join(blocks)
+
+
 def test_send_vlmo_batch_with_transactions():
     vlmo_by_company = {
         "24392": {
@@ -685,18 +690,17 @@ def test_send_vlmo_batch_with_transactions():
                 "position_type": "Diretor ou Vinculado",
                 "operation_type": "Compra à vista",
                 "asset":          "Ações ON",
+                "quantity":       1000.0,
                 "volume":         50000.0,
             }],
         }
     }
-    with patch("ipe_watcher.send_message") as mock_send:
-        ipe_watcher.send_vlmo_batch_notification(vlmo_by_company)
-        mock_send.assert_called_once()
-        msg = mock_send.call_args[0][0]
-        assert "TEST CO" in msg
-        assert "Diretor" in msg
-        assert "Compra" in msg
-        assert "50K" in msg
+    with patch("ipe_watcher.send_blocks", return_value=True) as mock_send:
+        assert ipe_watcher.send_vlmo_batch_notification(vlmo_by_company) is True
+    msg = _sent_text(mock_send)
+    assert "TEST CO" in msg
+    assert "• Diretor comprou 1.000 ações, valor R$ 50 mil, preço médio R$ 50,00" in msg
+    assert "abril/2026" in msg
 
 
 def test_send_vlmo_batch_empty_transactions():
@@ -705,23 +709,22 @@ def test_send_vlmo_batch_empty_transactions():
             "ticker":       "TEST3",
             "denom":        "TEST CO",
             "ref_month":    "2026-04",
-            "primary_link": "http://example.com/vlmo.pdf",
+            "primary_link": "",
             "transactions": [],
         }
     }
-    with patch("ipe_watcher.send_message") as mock_send:
+    with patch("ipe_watcher.send_blocks", return_value=True) as mock_send:
         ipe_watcher.send_vlmo_batch_notification(vlmo_by_company)
-        mock_send.assert_called_once()
-        msg = mock_send.call_args[0][0]
-        assert "TEST CO" in msg
-        assert "sem transações" in msg.lower()
+    msg = _sent_text(mock_send)
+    assert "TEST CO" in msg
+    assert "sem transações" in msg.lower()
 
 
-def test_send_vlmo_batch_aggregates_same_type():
+def test_send_vlmo_batch_aggregates_buybacks():
     txns = [
-        {"position_type": "Recompra", "operation_type": "Compra", "volume": 500_000.0},
-        {"position_type": "Recompra", "operation_type": "Compra", "volume": 700_000.0},
-        {"position_type": "Recompra", "operation_type": "Compra", "volume": 300_000.0},
+        {"position_type": "Recompra", "operation_type": "Compra", "quantity": 10_000.0, "volume": 500_000.0},
+        {"position_type": "Recompra", "operation_type": "Compra", "quantity": 14_000.0, "volume": 700_000.0},
+        {"position_type": "Recompra", "operation_type": "Compra", "quantity": 6_000.0, "volume": 300_000.0},
     ]
     vlmo_by_company = {
         "24392": {
@@ -729,11 +732,17 @@ def test_send_vlmo_batch_aggregates_same_type():
             "primary_link": "http://x", "transactions": txns,
         }
     }
-    with patch("ipe_watcher.send_message") as mock_send:
+    with patch("ipe_watcher.send_blocks", return_value=True) as mock_send:
         ipe_watcher.send_vlmo_batch_notification(vlmo_by_company)
-        msg = mock_send.call_args[0][0]
-        assert "(3x)" in msg
-        assert "1.5M" in msg
+    assert "• Recompra de 30.000 ações, valor R$ 1,5 mi, preço médio R$ 50,00" in _sent_text(mock_send)
+
+
+def test_send_vlmo_batch_one_block_per_company():
+    data = {c: {"ticker": f"T{c}", "denom": f"CO {c}", "ref_month": "2026-04",
+                "primary_link": "", "transactions": []} for c in ("1", "2", "3")}
+    with patch("ipe_watcher.send_blocks", return_value=True) as mock_send:
+        ipe_watcher.send_vlmo_batch_notification(data)
+    assert len(mock_send.call_args[0][1]) == 3
 
 
 # ── VLMO: integration in main() ──────────────────────────────────────────────
@@ -1117,9 +1126,29 @@ def test_send_message_returns_false_when_delivery_fails(monkeypatch):
 def test_vlmo_batch_month_label_in_portuguese():
     data = {"24392": {"ticker": "HAPV3", "denom": "HAPVIDA", "ref_month": "2026-03",
                       "transactions": [], "primary_link": ""}}
-    with patch("ipe_watcher.send_message", return_value=True) as mock_send:
+    with patch("ipe_watcher.send_blocks", return_value=True) as mock_send:
         assert ipe_watcher.send_vlmo_batch_notification(data) is True
-    assert "março/2026" in mock_send.call_args[0][0]
+    assert "março/2026" in _sent_text(mock_send)
+
+
+def test_main_drops_vlmo_older_than_latest_disclosed_month(main_env, monkeypatch):
+    """On 2026-10-19 the latest disclosed month is September: an August form
+    (late filing or new version) is not notified, and is not retried."""
+    today = date(2026, 10, 19)
+    main_env.write_text(today.isoformat())
+    df = pd.concat([_doc_df("2026-08-01", link="http://x/ago.pdf", categ=ipe_watcher.VLMO_CATEGORY),
+                    _doc_df("2026-09-01", link="http://x/set.pdf", categ=ipe_watcher.VLMO_CATEGORY)])
+    monkeypatch.setattr(ipe_watcher, "download_ipe_b3", lambda _s, _d: df)
+    monkeypatch.setattr(ipe_watcher, "parse_vlmo_pdf", lambda _b: [])
+    sent = []
+    monkeypatch.setattr(ipe_watcher, "send_vlmo_batch_notification",
+                        lambda v: sent.append(v) or True)
+
+    _run_main(today)
+
+    assert len(sent) == 1
+    assert [d["ref_month"] for d in sent[0].values()] == ["2026-09"]
+    assert len(ipe_watcher.load_processed_ids()) == 2
 
 
 def test_download_logs_link_attribute_names(b3_env, caplog):

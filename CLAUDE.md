@@ -45,6 +45,23 @@ Processados ↓
 - **pyyaml**: Config parsing
 - **xml.etree**: XML parsing (stdlib)
 
+### Negociações de insiders (VLMO)
+
+Dois avisos, com papéis diferentes:
+
+| Aviso | Fonte | Quando | Conteúdo |
+|---|---|---|---|
+| Diário (`ipe_watcher.py`) | PDF do formulário VLMO via B3 | a cada execução, quando chega formulário novo | todas as negociações da empresa da cobertura |
+| Semanal (`br_stock_trading.py`, `daily.yml`) | CSV consolidado da CVM (dados abertos) | segunda 09h BRT | só destaques P1/P2 da cobertura, por empresa |
+
+Regras comuns (`alerts.py`):
+- Só o **último mês divulgado** (`latest_disclosed_month`: o mês anterior a partir do dia 11; antes disso, o mês retrasado). Meses anteriores nunca são avisados.
+- Linhas agregadas por empresa, cargo e sentido: `• Controlador comprou X ações, valor Y, preço médio Z`.
+- P1: Controlador / Conselho de Administração / Diretor com linha > R$ 500 mil. P2: total negociado pela empresa no mês > R$ 2 mi. Não há P3.
+- O semanal envia cada empresa uma vez por mês de referência (estado em `datasets/vlmo_summary_state.json`) e de novo só se os números mudarem, marcada como "atualizado".
+- Recompra: o CSV da CVM só traz insiders; recompra pela companhia aparece apenas quando a descrição do movimento cita "recompra". O aviso diário (PDF) traz a seção de tesouraria.
+- Envio pelo Telegram em blocos por empresa, 1,5 s entre mensagens, respeitando `retry_after` em HTTP 429.
+
 ## Customizações Comuns
 
 ### 1. Adicionar Filtro Extra no pre_filter()

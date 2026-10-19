@@ -24,8 +24,9 @@ import requests
 import yaml
 from openai import OpenAI
 
+import alerts
 from utils import create_session
-from telegram_notifier import send_message
+from telegram_notifier import send_blocks, send_message
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -60,8 +61,6 @@ SYSTEM_PROMPT_FILE = Path("config/system_prompt_ipe.txt")
 # letterhead/disclaimer; 4000 chars frequently cut before the substance.
 LLM_TEXT_CHARS = 12000
 
-MONTHS_PT = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho",
-             "agosto", "setembro", "outubro", "novembro", "dezembro"]
 
 B3_API_URL = "https://seguro.bmfbovespa.com.br/rad/download/SolicitaDownload.asp"
 
@@ -424,16 +423,6 @@ def _infer_pos_type(pos_type: str, asset: str) -> str:
     return "Outros"
 
 
-def _format_amount(v: float) -> str:
-    """Format BRL amount compactly: R$ 1.4M, R$ 500K, R$ 13K."""
-    abs_v = abs(v)
-    if abs_v >= 1_000_000:
-        return f"R$ {abs_v / 1_000_000:.1f}M"
-    if abs_v >= 1_000:
-        return f"R$ {abs_v / 1_000:.0f}K"
-    return f"R$ {abs_v:,.0f}"
-
-
 def _parse_vlmo_page(text: str) -> list[dict]:
     """Parse one VLMO PDF page into a list of transaction dicts."""
     lines = [l.rstrip() for l in text.splitlines()]
@@ -558,58 +547,65 @@ def send_notification(row: pd.Series, summary: str | None) -> bool:
     return send_message(msg)
 
 
-def send_vlmo_batch_notification(vlmo_by_company: dict) -> bool:
-    """Send ONE consolidated VLMO Telegram message for all companies in this run.
+def _vlmo_lines(transactions: list[dict]) -> list[str]:
+    """Aggregate PDF transactions per position and direction, in the same
+    format as the weekly summary ('• Diretor vendeu 1.000 ações, ...')."""
+    totals: dict[tuple[str, str], list[float]] = {}
+    for txn in transactions:
+        pos = txn.get("position_type", "Outros")
+        op = str(txn.get("operation_type", "")).strip()
+        if pos == "Recompra":
+            key = ("", "recompra")
+        elif op.lower().startswith("compra"):
+            key = (pos, "compra")
+        elif op.lower().startswith("venda"):
+            key = (pos, "venda")
+        else:
+            key = (pos, op)  # transfer, grant, subscription...: shown as is
+        acc = totals.setdefault(key, [0.0, 0.0])
+        acc[0] += abs(txn.get("quantity", 0.0))
+        acc[1] += abs(txn.get("volume", 0.0))
 
-    Returns True if every recipient received it (or there was nothing to send).
+    lines = []
+    for (pos, kind), (qty, vol) in sorted(totals.items(), key=lambda kv: -kv[1][1]):
+        if kind in ("compra", "venda", "recompra"):
+            lines.append(alerts.format_trade_line(pos, kind, qty, vol))
+        else:
+            lines.append(f"• {alerts.short_position(pos)} — {kind}: "
+                         f"{alerts._fmt_int(qty)} ações, valor {alerts._fmt_brl(vol)}")
+    return lines
+
+
+def send_vlmo_batch_notification(vlmo_by_company: dict) -> bool:
+    """Send the VLMO forms that arrived in this run, one block per company,
+    split across as many messages as needed.
+
+    Returns True if every recipient received every message (or there was
+    nothing to send).
     """
     if not vlmo_by_company:
         return True
-
-    ref_month = next(iter(vlmo_by_company.values())).get("ref_month", "")
-    try:
-        ref = datetime.strptime(ref_month, "%Y-%m")
-        month_label = f"{MONTHS_PT[ref.month - 1]}/{ref.year}"
-    except (ValueError, TypeError):
-        month_label = ref_month or "—"
 
     today_brt = datetime.now(ZoneInfo("America/Sao_Paulo"))
     month_abbrs = ["jan", "fev", "mar", "abr", "mai", "jun",
                    "jul", "ago", "set", "out", "nov", "dez"]
     today_str = f"{today_brt.day}-{month_abbrs[today_brt.month - 1]}"
+    header = f"*Atualização VLMO ({today_str})*\n\n"
 
-    lines: list[str] = [f"*Atualização VLMO — {month_label} ({today_str})*", ""]
+    blocks = []
+    for data in vlmo_by_company.values():
+        ref_month = data.get("ref_month", "")
+        try:
+            label = alerts.month_label(pd.Period(ref_month, freq="M"))
+        except (ValueError, TypeError):
+            label = ref_month or "—"
+        link = data.get("primary_link", "")
+        link_part = f", [doc]({link})" if link else ""
+        title = f"*{data['denom']}* ({data['ticker']}, ref. {label}{link_part})"
+        body = _vlmo_lines(data.get("transactions", [])) or ["• sem transações"]
+        blocks.append("\n".join([title, *body]))
 
-    for ccvm, data in vlmo_by_company.items():
-        ticker = data["ticker"]
-        denom = data["denom"]
-        transactions = data.get("transactions", [])
-        primary_link = data.get("primary_link", "")
-
-        link_part = f", [doc]({primary_link})" if primary_link else ""
-        company_header = f"• {ticker} ({denom}{link_part})"
-
-        if not transactions:
-            lines.append(company_header + ": sem transações")
-            continue
-
-        lines.append(company_header + ":")
-
-        groups: dict[tuple, float] = {}
-        group_counts: dict[tuple, int] = {}
-        for txn in transactions:
-            pos = txn.get("position_type", "Outros")
-            op = txn.get("operation_type", "—").title()
-            key = (pos, op)
-            groups[key] = groups.get(key, 0.0) + txn.get("volume", 0.0)
-            group_counts[key] = group_counts.get(key, 0) + 1
-
-        for (pos, op), total_vol in groups.items():
-            count = group_counts[(pos, op)]
-            count_str = f" ({count}x)" if count > 1 else ""
-            lines.append(f"  · {pos} · {op} · {_format_amount(total_vol)}{count_str}")
-
-    return send_message("\n".join(lines))
+    return send_blocks(header, blocks)
 
 
 # ── Git commit-back ───────────────────────────────────────────────────────────
@@ -671,6 +667,7 @@ def main() -> None:
     new_records    = []
     vlmo_by_company: dict[str, dict] = {}
     vlmo_hashes: list[str] = []
+    vlmo_cutoff    = alerts.latest_disclosed_month(today)
     failed_dates: list[date] = []
     undelivered = 0
 
@@ -725,6 +722,11 @@ def main() -> None:
             continue
 
         if categ == VLMO_CATEGORY:
+            # Only the latest disclosed month matters; late or re-filed forms
+            # for older months are dropped (and remembered as handled).
+            if str(row.get("DT_REF", ""))[:7] < str(vlmo_cutoff):
+                processed.add(doc_hash)
+                continue
             link = str(row.get("LINK_DOC", ""))
             pdf_bytes = None
             if link:
