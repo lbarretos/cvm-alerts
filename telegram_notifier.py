@@ -1,12 +1,15 @@
-"""Telegram alert dispatcher for CVM insider-trading alerts."""
+"""Telegram dispatcher shared by the IPE watcher and the weekly VLMO summary."""
 
 import os
 import logging
+import time
+
 import requests
-import pandas as pd
 
 TELEGRAM_API = 'https://api.telegram.org/bot{token}/sendMessage'
 MSG_LIMIT = 3800   # hard limit is 4096; keep margin for headers
+SEND_INTERVAL = 1.5      # seconds between messages to one chat (limit ~20/min in groups)
+MAX_RETRY_AFTER = 120    # cap on a single 429 back-off
 
 logger = logging.getLogger(__name__)
 
@@ -49,19 +52,19 @@ def _get_credentials() -> tuple[str, str]:
     return os.environ['TELEGRAM_BOT_TOKEN'], os.environ['TELEGRAM_CHAT_ID']
 
 
-def _format_alert(row: pd.Series) -> str:
-    pos_type = row['Position_Type'] if pd.notna(row.get('Position_Type')) else 'N/A'
-    try:
-        qty = f"{int(row['Quantity']):,}"
-    except (ValueError, TypeError):
-        qty = str(row['Quantity'])
-    return (
-        f"*{row['priority']} - {row['Company_CNPJ']}*\n"
-        f"{row['Company_Name']}\n"
-        f"{pos_type}: {row['Operation_Type']} {qty} @ {row['Unit_Price']:.2f}\n"
-        f"Volume: R$ {abs(row['Volume']):,.0f}\n"
-        f"Razão: {row['reason']}"
-    )
+def _post(url: str, payload: dict) -> requests.Response:
+    """POST once; on HTTP 429 wait the advertised retry_after and retry once."""
+    resp = requests.post(url, json=payload, timeout=10)
+    if resp.status_code == 429:
+        try:
+            wait = int(resp.json().get('parameters', {}).get('retry_after', 5))
+        except ValueError:
+            wait = 5
+        wait = min(wait, MAX_RETRY_AFTER)
+        logger.warning(f"Telegram rate limit, waiting {wait}s")
+        time.sleep(wait)
+        resp = requests.post(url, json=payload, timeout=10)
+    return resp
 
 
 def _send(token: str, chat_id: str, text: str) -> bool:
@@ -73,14 +76,10 @@ def _send(token: str, chat_id: str, text: str) -> bool:
     """
     url = TELEGRAM_API.format(token=token)
     try:
-        resp = requests.post(
-            url,
-            json={'chat_id': chat_id, 'text': text, 'parse_mode': 'Markdown'},
-            timeout=10,
-        )
+        resp = _post(url, {'chat_id': chat_id, 'text': text, 'parse_mode': 'Markdown'})
         if resp.status_code == 400:
             logger.warning(f"Telegram rejected Markdown, resending as plain text: {resp.text[:200]}")
-            resp = requests.post(url, json={'chat_id': chat_id, 'text': text}, timeout=10)
+            resp = _post(url, {'chat_id': chat_id, 'text': text})
         if not resp.ok:
             logger.warning(f"Telegram error {resp.status_code}: {resp.text[:200]}")
             return False
@@ -90,9 +89,11 @@ def _send(token: str, chat_id: str, text: str) -> bool:
         return False
 
 
-def _chunk_messages(header: str, blocks: list, limit: int) -> list:
-    """Split alert blocks into messages that fit within the Telegram char limit."""
-    separator = '\n\n---\n\n'
+def _chunk_messages(header: str, blocks: list, limit: int, separator: str = '\n\n') -> list:
+    """Split blocks into messages that fit within the Telegram char limit.
+
+    Every message starts with `header`; a block is never split.
+    """
     messages = []
     current = header
     for block in blocks:
@@ -107,29 +108,18 @@ def _chunk_messages(header: str, blocks: list, limit: int) -> list:
     return messages
 
 
-def send_alerts(alerts_df: pd.DataFrame) -> None:
-    """Send Telegram messages grouped by priority (P1 → P2 → P3).
-
-    Does nothing if alerts_df is empty or has no rows.
-    Network errors are logged as warnings and do not raise.
-    Raises KeyError if TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID are not set.
+def send_blocks(header: str, blocks: list[str]) -> bool:
+    """Send blocks as as few messages as fit, paced to stay under Telegram's
+    per-chat rate limit. Returns True only if every message reached every
+    recipient. Raises KeyError if TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID are
+    not set.
     """
-    if alerts_df is None or alerts_df.empty:
-        return
-
-    recipients = _get_all_recipients()
-
-    for priority in ('P1', 'P2', 'P3'):
-        group = alerts_df[alerts_df['priority'] == priority]
-        if group.empty:
-            continue
-
-        header = f"⚠️ *Alertas {priority} ({len(group)} registro(s))*\n\n"
-        blocks = [_format_alert(row) for _, row in group.iterrows()]
-
-        for msg in _chunk_messages(header, blocks, MSG_LIMIT):
-            for token, chat_id in recipients:
-                _send(token, chat_id, msg)
+    ok = True
+    for i, msg in enumerate(_chunk_messages(header, blocks, MSG_LIMIT)):
+        if i:
+            time.sleep(SEND_INTERVAL)
+        ok = send_message(msg) and ok
+    return ok
 
 
 def send_message(text: str) -> bool:

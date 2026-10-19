@@ -1,11 +1,27 @@
-"""Insider-trading alert classification for CVM VLMO consolidated data."""
+"""Insider-trading highlights for the coverage list (CVM VLMO consolidated data).
+
+Weekly summary rules:
+  - Only coverage companies (config/cnpj_map.yaml, matched by CNPJ).
+  - Only the latest disclosed reference month (see latest_disclosed_month).
+  - Only buys, sells and buybacks of shares/units, aggregated per company,
+    position and direction.
+  - A company is listed when it has a P1 or P2 highlight:
+      P1 — Controlador / Conselho de Administração / Diretor line > R$ 500k
+      P2 — company's total traded volume in the month > R$ 2M
+  - A company is sent once per reference month, and again only if its
+    figures change (late filing, new version).
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import date, timedelta
+from pathlib import Path
 
 import pandas as pd
 import yaml
-from pathlib import Path
-from typing import List
 
-# Position types considered C-level / control-related (P1 eligible)
 EXEC_POSITIONS = {
     'Controlador ou Vinculado',
     'Conselho de Administração ou Vinculado',
@@ -15,113 +31,174 @@ EXEC_POSITIONS = {
 P1_VOLUME_THRESHOLD  = 500_000
 P2_MONTHLY_THRESHOLD = 2_000_000
 
+EQUITY_ASSETS = {'Ações', 'Units'}
 
-def load_coverage(config_path: str = 'config/coverage.yaml') -> List[str]:
-    """Return CVM company-name substrings for all tickers in coverage.yaml."""
-    with open(config_path) as f:
-        cfg = yaml.safe_load(f)
-    ticker_map = cfg['ticker_map']
-    seen: set = set()
-    names: List[str] = []
-    for tickers in cfg['sectors'].values():
-        for ticker in tickers:
-            name = ticker_map.get(ticker)
-            if name and name not in seen:
-                seen.add(name)
-                names.append(name)
-    return names
+MONTHS_PT = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho",
+             "agosto", "setembro", "outubro", "novembro", "dezembro"]
+
+# Monthly VLMO forms are due 10 days after month end (Res. CVM 44).
+FILING_DEADLINE_DAYS = 10
 
 
-def _in_coverage(company_name: str, coverage: List[str]) -> bool:
-    upper = str(company_name).upper()
-    return any(c.upper() in upper for c in coverage)
+# ── Shared helpers (also used by ipe_watcher for the daily VLMO notice) ──────
 
+def latest_disclosed_month(today: date) -> pd.Period:
+    """Reference month whose filings are the latest due as of `today`.
 
-def classify_alerts(delta_df: pd.DataFrame, coverage_tickers: List[str]) -> pd.DataFrame:
-    """Classify delta records into alert priorities.
-
-    Rules (highest wins; reasons concatenated when multiple same-priority rules match):
-      P1 — Controlador/C-level/Conselheiro AND volume > R$ 500k
-      P2 — Monthly aggregate volume by insider > R$ 2M
-      P3 — Any operation in a coverage ticker
-
-    Parameters
-    ----------
-    delta_df : DataFrame
-        Output of delta.detect_new_records(); expected columns from the VLMO consolidated schema.
-    coverage_tickers : list[str]
-        Substrings of Company_Name to match (case-insensitive). Load via load_coverage().
-
-    Returns
-    -------
-    DataFrame with the same columns as delta_df plus 'priority' ('P1'/'P2'/'P3') and 'reason'.
-    Only rows that triggered at least one rule are returned, sorted by priority then Company_Name.
+    Until the 10th, last month's forms are still arriving, so the month
+    before it is the latest fully disclosed one; from the 11th on, it is
+    last month.
     """
-    if delta_df.empty:
-        return delta_df.assign(priority=pd.Series(dtype=str), reason=pd.Series(dtype=str))
+    shifted = today - timedelta(days=FILING_DEADLINE_DAYS)
+    return pd.Period(shifted, freq='M') - 1
 
-    df = delta_df.copy()
-    df['Movement_Date']  = pd.to_datetime(df['Movement_Date'])
-    df['Reference_Date'] = pd.to_datetime(df['Reference_Date'])
-    df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce').fillna(0)
 
-    vol_abs = df['Volume'].abs()
+def month_label(period: pd.Period) -> str:
+    return f"{MONTHS_PT[period.month - 1]}/{period.year}"
 
-    # Monthly volume per insider vehicle + listed company
-    df['_ym'] = df['Movement_Date'].dt.to_period('M')
-    monthly_vol = df.groupby(['Company_CNPJ', 'Company', '_ym'])['Volume'].transform(
-        lambda x: x.abs().sum()
-    )
 
-    # Boolean masks
-    is_exec      = df['Position_Type'].isin(EXEC_POSITIONS)
-    high_vol     = vol_abs > P1_VOLUME_THRESHOLD
-    high_monthly = monthly_vol > P2_MONTHLY_THRESHOLD
-    in_coverage  = df['Company_Name'].apply(lambda n: _in_coverage(n, coverage_tickers))
+def short_position(position: str) -> str:
+    """'Conselho de Administração ou Vinculado' → 'Conselho de Administração'."""
+    p = str(position).strip()
+    if p.lower().startswith('controlador'):
+        return 'Controlador'
+    if p.lower().startswith('diret'):
+        return 'Diretor'
+    return p.removesuffix(' ou Vinculado').strip() or 'Outros'
 
-    # Per-row reason string for P1
-    p1_reason = (
-        'Insider ' + df['Position_Type'].astype(str)
-        + ' com volume R$ ' + vol_abs.map(lambda v: f'{v:,.0f}')
-        + f' > {P1_VOLUME_THRESHOLD:,.0f}'
-    )
 
-    # Rule registry: (priority_int, reason_series_or_str, mask)
-    # Processed in ascending priority order so higher-priority rules can override lower ones.
-    rules = [
-        (3, pd.Series('Operação em empresa da cobertura', index=df.index), in_coverage),
-        (2, pd.Series(f'Volume mensal por insider > R$ {P2_MONTHLY_THRESHOLD:,.0f}', index=df.index), high_monthly),
-        (1, p1_reason, is_exec & high_vol),
-    ]
+def _fmt_int(n: float) -> str:
+    return f"{n:,.0f}".replace(',', '.')
 
-    prio_int = pd.Series(99, index=df.index)   # 99 = no alert
-    reason   = pd.Series('', index=df.index, dtype=object)
 
-    for p, r_series, mask in rules:
-        affected = df.index[mask]
-        if affected.empty:
+def _fmt_brl(v: float) -> str:
+    v = abs(v)
+    if v >= 1_000_000_000:
+        return f"R$ {v / 1_000_000_000:.1f} bi".replace('.', ',')
+    if v >= 1_000_000:
+        return f"R$ {v / 1_000_000:.1f} mi".replace('.', ',')
+    if v >= 1_000:
+        return f"R$ {v / 1_000:.0f} mil"
+    return f"R$ {v:.0f}"
+
+
+def _fmt_price(p: float) -> str:
+    return f"R$ {p:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+
+
+def format_trade_line(position: str, direction: str, quantity: float, volume: float) -> str:
+    """'• Controlador comprou 1.000 ações, valor R$ 50 mil, preço médio R$ 50,00'."""
+    avg = volume / quantity if quantity else 0.0
+    tail = f"{_fmt_int(quantity)} ações, valor {_fmt_brl(volume)}, preço médio {_fmt_price(avg)}"
+    if direction == 'recompra':
+        return f"• Recompra de {tail}"
+    verb = 'comprou' if direction == 'compra' else 'vendeu'
+    return f"• {short_position(position)} {verb} {tail}"
+
+
+# ── Weekly summary ───────────────────────────────────────────────────────────
+
+def load_coverage_map(path: str = 'config/cnpj_map.yaml') -> dict[str, dict]:
+    """Return CNPJ → {tickers, denom} for the coverage list."""
+    with open(path, encoding='utf-8') as f:
+        tickers = yaml.safe_load(f)['tickers']
+    result: dict[str, dict] = {}
+    for ticker, info in tickers.items():
+        entry = result.setdefault(info['cnpj'], {'tickers': [], 'denom': info['denom']})
+        entry['tickers'].append(ticker)
+    return result
+
+
+def _direction(row: pd.Series) -> str | None:
+    if 'recompra' in str(row.get('Movement_Description', '')).lower():
+        return 'recompra'
+    mov = str(row.get('Movement_Type', '')).lower()
+    if mov.startswith('compra'):
+        return 'compra'
+    if mov.startswith('venda'):
+        return 'venda'
+    return None  # loans, grants, inheritance, etc. are not market trades
+
+
+def trade_lines(df: pd.DataFrame, coverage: dict[str, dict], month: pd.Period) -> pd.DataFrame:
+    """Aggregate coverage trades of `month` per company, position and direction."""
+    if df.empty:
+        return pd.DataFrame(columns=['Company_CNPJ', 'Position_Type', 'direction', 'Quantity', 'Volume'])
+    d = df[df['Company_CNPJ'].isin(coverage)].copy()
+    d = d[pd.to_datetime(d['Reference_Date']).dt.to_period('M') == month]
+    d = d[d['Asset_Type'].isin(EQUITY_ASSETS)]
+    d['direction'] = d.apply(_direction, axis=1)
+    d = d[d['direction'].notna()]
+    d['Quantity'] = pd.to_numeric(d['Quantity'], errors='coerce').fillna(0).abs()
+    d['Volume'] = pd.to_numeric(d['Volume'], errors='coerce').fillna(0).abs()
+    # Zero-value "purchases" are grants/transfers at no price, not trades.
+    d = d[d['Volume'] > 0]
+    # Buybacks are reported under the insider who executed them; group them
+    # together regardless of position.
+    d.loc[d['direction'] == 'recompra', 'Position_Type'] = ''
+    return (d.groupby(['Company_CNPJ', 'Position_Type', 'direction'], as_index=False)
+             [['Quantity', 'Volume']].sum())
+
+
+def highlights(lines: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Return CNPJ → its trade lines, for companies with a P1 or P2 highlight."""
+    result = {}
+    for cnpj, g in lines.groupby('Company_CNPJ'):
+        p1 = (g['Position_Type'].isin(EXEC_POSITIONS) & (g['Volume'] > P1_VOLUME_THRESHOLD)).any()
+        p2 = g['Volume'].sum() > P2_MONTHLY_THRESHOLD
+        if p1 or p2:
+            result[cnpj] = g.sort_values('Volume', ascending=False)
+    return result
+
+
+def _fingerprint(g: pd.DataFrame) -> str:
+    rows = sorted(f"{r.Position_Type}|{r.direction}|{r.Quantity:.0f}|{r.Volume:.0f}"
+                  for r in g.itertuples())
+    return hashlib.sha256("\n".join(rows).encode()).hexdigest()[:16]
+
+
+def company_block(cnpj: str, g: pd.DataFrame, coverage: dict[str, dict], updated: bool) -> str:
+    info = coverage[cnpj]
+    denom = " ".join(info['denom'].split())
+    title = f"*{denom}* ({'/'.join(info['tickers'])})"
+    if updated:
+        title += " — atualizado"
+    body = [format_trade_line(r.Position_Type, r.direction, r.Quantity, r.Volume)
+            for r in g.itertuples()]
+    return "\n".join([title, *body])
+
+
+def weekly_summary(df: pd.DataFrame, coverage: dict[str, dict], today: date,
+                   state: dict[str, str]) -> tuple[str, list[str], dict[str, str]]:
+    """Build the weekly summary.
+
+    Returns (header, company_blocks, new_state). Blocks are only produced for
+    companies whose highlights are new or changed versus `state`; new_state
+    holds only the current month's fingerprints.
+    """
+    month = latest_disclosed_month(today)
+    picked = highlights(trade_lines(df, coverage, month))
+    new_state: dict[str, str] = {}
+    blocks = []
+    for cnpj, g in sorted(picked.items(), key=lambda kv: coverage[kv[0]]['denom']):
+        key = f"{cnpj}|{month}"
+        fp = _fingerprint(g)
+        new_state[key] = fp
+        if state.get(key) == fp:
             continue
+        blocks.append(company_block(cnpj, g, coverage, updated=key in state))
+    header = f"📊 *Insiders — {month_label(month)}* (destaques P1/P2 da cobertura)\n\n"
+    return header, blocks, new_state
 
-        curr = prio_int[affected]
-        better = curr > p   # new rule has higher priority
-        equal  = curr == p  # same priority — append reason
 
-        better_idx = affected[better.values]
-        equal_idx  = affected[equal.values]
+def load_state(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    with open(path, encoding='utf-8') as f:
+        return json.load(f)
 
-        prio_int[better_idx] = p
-        reason[better_idx]   = r_series[better_idx]
 
-        # Append reason when two same-priority rules fire on the same row
-        for i in equal_idx:
-            reason[i] = f"{reason[i]}; {r_series[i]}"
-
-    # Build result: only rows that got at least one alert
-    has_alert = prio_int < 99
-    int_to_str = {1: 'P1', 2: 'P2', 3: 'P3'}
-
-    result = df[has_alert].drop(columns=['_ym']).copy()
-    result['priority'] = prio_int[has_alert].map(int_to_str).values
-    result['reason']   = reason[has_alert].values
-
-    return result.sort_values(['priority', 'Company_Name']).reset_index(drop=True)
+def save_state(path: Path, state: dict[str, str]) -> None:
+    path.parent.mkdir(exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(state, f, indent=2, sort_keys=True)
