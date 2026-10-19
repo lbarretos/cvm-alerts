@@ -1,10 +1,15 @@
-# CVM Alerts — Monitoramento de Fatos Relevantes em Tempo Real
+# CVM Alerts
 
-Monitor Fatos Relevantes (FRs) e Comunicados ao Mercado de empresas brasileiras via API da B3/CVM. Recebe alertas via Telegram com análise automática via LLM.
+Alertas no Telegram para as empresas da sua cobertura na B3:
 
-## 🚀 Início Rápido
+- **Fatos Relevantes e Comunicados ao Mercado**, com resumo automático por LLM (Deepseek), ao longo do dia.
+- **Negociações de insiders (VLMO)**: aviso quando chega formulário novo e resumo semanal com os destaques.
 
-### 1. Clonar e Configurar
+Tudo roda no GitHub Actions; não há servidor.
+
+## Início rápido
+
+### 1. Clonar
 
 ```bash
 git clone https://github.com/lbarretos/cvm-alerts.git
@@ -12,23 +17,22 @@ cd cvm-alerts
 pip install -r requirements.txt
 ```
 
-### 2. Adicionar Credenciais (GitHub Secrets)
+### 2. Secrets
 
-Vá para **Settings → Secrets and variables → Actions** e adicione:
+Em **Settings → Secrets and variables → Actions**:
 
-| Secret | Valor | Onde Obter |
+| Secret | Valor | Onde obter |
 |--------|-------|-----------|
-| `CVM_USERNAME` | Login CVM | Solicite em [conteudo.cvm.gov.br](https://conteudo.cvm.gov.br/menu/regulados/companhias/download_multiplo/) |
-| `CVM_PASSWORD` | Senha CVM | Mesmo portal — a senha expira periodicamente; veja **Renovação de Senha** abaixo |
-| `TELEGRAM_BOT_TOKEN` | Token do bot Telegram | `@BotFather` no Telegram |
-| `TELEGRAM_CHAT_ID` | ID do chat | `@userinfobot` no Telegram |
-| `DEEPSEEK_API_KEY` | API key Deepseek | [platform.deepseek.com](https://platform.deepseek.com) |
+| `CVM_USERNAME` | Login do Download Múltiplo | Cadastro na CVM ([Download Múltiplo](https://conteudo.cvm.gov.br/menu/regulados/companhias/download_multiplo/index.html)); login e senha chegam por e-mail |
+| `CVM_PASSWORD` | Senha do Download Múltiplo | Expira periodicamente — veja [Senha](#senha-expirada-ou-login-incorreto) |
+| `TELEGRAM_BOT_TOKEN` | Token do bot | `@BotFather` |
+| `TELEGRAM_CHAT_ID` | ID do chat (vários separados por vírgula) | `@userinfobot` |
+| `DEEPSEEK_API_KEY` | API key | [platform.deepseek.com](https://platform.deepseek.com) |
+| `TELEGRAM_BOT_TOKEN_2` / `TELEGRAM_CHAT_ID_2` | Opcional: segundo bot | `@BotFather` |
 
-### 3. Customizar Empresas Monitoradas
+### 3. Empresas monitoradas
 
-Edite `config/cnpj_map.yaml` — apenas as empresas listadas geram alertas.
-
-**Exemplo:** para monitorar só AZUL4 e GOLL4:
+`config/cnpj_map.yaml` é a lista que gera alertas. Cada empresa precisa de CNPJ, código CVM (`ccvm`) e nome:
 
 ```yaml
 tickers:
@@ -36,112 +40,100 @@ tickers:
   GOLL4: {cnpj: "06.164.253/0001-87", ccvm: "19569", denom: "GOL LINHAS AEREAS INTELIGENTES SA"}
 ```
 
-### 4. Disparar Workflow
+`config/coverage.yaml` é só a lista de referência por setor. `scripts/build_cnpj_map.py` busca os CNPJs dela no cadastro da CVM e grava em `config/cnpj_map.generated.yaml`; o `ccvm` é preenchido à mão.
 
-Vá para **Actions → IPE Hourly Watcher → Run workflow**.
+## O que você recebe
 
-Ou espere os horários automáticos:
-- **06h00, 09h00, 12h00, 18h00, 20h59 BRT** (seg–sex)
+### Fatos Relevantes e Comunicados (`ipe_watcher.py`)
 
-## 📊 O Que Você Recebe
+A cada 3 h, das 09h às 21h BRT (09h, 12h, 15h, 18h, 21h), seg–sex. Para cada documento novo de uma empresa da cobertura:
 
-- **Fato Relevante (FR)**: Sempre alerta
-- **Comunicado ao Mercado**: Sempre alerta
-- **Resumo automático**: LLM analisa e extrai pontos-chave
-- **Link do PDF**: Documento original da CVM
-- **Telegram**: Notificação em tempo real
+- **Fato Relevante** e **Comunicado ao Mercado**: sempre.
+- **Aviso / Comunicado aos Acionistas**: exceto rotina (pagamento de dividendos/JCP já anunciado, calendário de eventos, atas de AGO/AGE sem pauta material, política de divulgação, código de conduta, estatuto sem mudança de capital ou controle). Palavras-chave como aquisição, OPA, recuperação judicial, renúncia ou CVM forçam o envio.
+- Mensagem com resumo do LLM em 3 tópicos (Fato / Impacto / Risco-Catalisador) e link do PDF.
 
-## 🔧 Estrutura
+Cada documento é enviado uma vez (dedup por hash em `datasets/ipe_processed_ids.json`).
+
+### Negociações de insiders (VLMO)
+
+| Aviso | Quando | Conteúdo |
+|---|---|---|
+| Diário | quando chega formulário VLMO novo (via `ipe_watcher.py`) | todas as negociações da empresa no mês |
+| Semanal | segunda, 09h BRT (`br_stock_trading.py`) | só destaques P1/P2, por empresa |
+
+Formato:
+
+```
+*LOCALIZA FLEET S.A.* (RENT3)
+• Controlador comprou 10.000 ações, valor R$ 600 mil, preço médio R$ 60,00
+• Diretor vendeu 2.000 ações, valor R$ 100 mil, preço médio R$ 50,00
+```
+
+- Só o **último mês divulgado** (os formulários vencem 10 dias após o fim do mês; meses anteriores nunca são avisados).
+- **P1**: Controlador, Conselho de Administração ou Diretor com mais de R$ 500 mil. **P2**: empresa com mais de R$ 2 mi negociados no mês.
+- O resumo semanal manda cada empresa uma vez por mês; se os números mudarem (entrega atrasada, nova versão), ela volta marcada "atualizado".
+- O dado semanal vem do CSV de dados abertos da CVM, que só traz insiders: recompra pela própria companhia só aparece quando a descrição do movimento cita "recompra". O aviso diário, lido do PDF, traz a seção de tesouraria.
+
+## Workflows
+
+| Workflow | Arquivo | Quando |
+|---|---|---|
+| B3 IPE & VLMO Monitor | `ipe_watcher.yml` | a cada 3 h, 09h–21h BRT, seg–sex |
+| CVM Weekly VLMO Pipeline | `vlmo_weekly.yml` | segunda, 09h07 BRT |
+| Tests | `tests.yml` | todo PR e push na `main`; auditoria de dependências toda segunda |
+
+Rodar manualmente: **Actions → [workflow] → Run workflow**.
+
+Se um workflow falhar, chega um aviso no Telegram com o link da execução (o watcher não repete o aviso quando ele mesmo já alertou, como em senha expirada).
+
+O CSV consolidado do VLMO (~20 MB) fica como artifact da execução semanal (`vlmo-consolidated`, 90 dias), não no git.
+
+## Estrutura
 
 ```
 .
-├── ipe_watcher.py              # Script principal
+├── ipe_watcher.py            # Fatos Relevantes, Comunicados e aviso diário de VLMO
+├── br_stock_trading.py       # Pipeline semanal de VLMO (dados abertos da CVM)
+├── alerts.py                 # Regras e formato do VLMO (P1/P2, mês de referência)
+├── telegram_notifier.py      # Envio ao Telegram (ritmo, 429, fallback sem Markdown)
 ├── config/
-│   ├── cnpj_map.yaml          # Empresas monitoradas (customize aqui)
-│   └── system_prompt_ipe.txt   # Prompt do LLM (customize se quiser)
-├── datasets/
-│   ├── ipe_processed_ids.json  # Cache de dedup (GitHub Actions)
-│   └── ipe_skipped_log.csv     # Log de docs excluídos
-└── .github/workflows/
-    └── ipe_hourly.yml         # Agendamento automático
+│   ├── cnpj_map.yaml         # Empresas que geram alertas
+│   ├── coverage.yaml         # Cobertura por setor (referência)
+│   └── system_prompt_ipe.txt # Prompt do LLM
+├── datasets/                 # Estado versionado no git
+│   ├── ipe_processed_ids.json
+│   ├── ipe_last_run_date.txt
+│   ├── ipe_skipped_log.csv
+│   └── vlmo_summary_state.json
+├── reports/                  # Relatório HTML semanal
+└── tests/
 ```
 
-## 🛠️ Customizações
+## Senha expirada ou login incorreto
 
-### Mudar Intervalo de Execução
+O watcher para na hora (workflow vermelho) e manda alerta no Telegram. A B3 responde com o erro `1`; as mensagens observadas são `LOGIN INCORRETO`, `SENHA EXPIRADA` e `USUÁRIO SUSPENSO`.
 
-Edite `.github/workflows/ipe_hourly.yml`:
+**Trocar a senha** (Nota Técnica do Download Múltiplo, §5):
+- [cas.bovespa.com.br/cas](https://cas.bovespa.com.br/cas/) → login → menu **Senhas** → senha atual e nova → **Alterar**; ou
+- [rad.cvm.gov.br/ENET](https://www.rad.cvm.gov.br/ENET) → login → ícone do triângulo verde → **Alteração de senha**.
 
-```yaml
-schedule:
-  - cron: '0 9,15 * * 1-5'  # 09h e 15h UTC, seg-sex
-```
+Depois atualize o secret `CVM_PASSWORD`.
 
-Veja [crontab.guru](https://crontab.guru) para converter.
+**Conta suspensa:** `suporteexterno@cvm.gov.br` · `0800-944-3535`.
 
-### Mudar Critério de Filtro
+> Os sistemas da CVM saem do ar para manutenção alguns dias por ano. Verifique avisos em [gov.br/cvm](https://www.gov.br/cvm/pt-br) antes de acionar o suporte.
 
-Edite `config/system_prompt_ipe.txt` para ajustar o que o LLM considera importante.
+## Rodar localmente
 
-### Adicionar Notificação Extra
-
-Edite `ipe_watcher.py` linha ~268 (`send_notification`) para adicionar Slack, Discord, etc.
-
-## ⚠️ Requisitos
-
-- **Python 3.11+**
-- **Conta CVM** com acesso à API Multiple Download
-- **Telegram Bot** (criar com `@BotFather`)
-- **Deepseek API** (free tier funciona)
-
-## 🔑 Problemas de Credencial CVM
-
-Três erros B3 causam **workflow vermelho ❌ + alerta Telegram** imediatos:
-
-| Erro B3 | Causa | Solução |
-|---------|-------|---------|
-| `SENHA EXPIRADA` | Senha venceu | Renovar senha (ver abaixo) |
-| `LOGIN INCORRETO` | Senha errada no Secret | Corrigir `CVM_PASSWORD` no Secret |
-| `USUÁRIO SUSPENSO` | Conta bloqueada após muitas tentativas | Contatar suporte para desbloquear |
-
-**Para trocar a senha** (Nota Técnica do Download Múltiplo, §5):
-- Opção 1: [cas.bovespa.com.br/cas](https://cas.bovespa.com.br/cas/) → login → menu **Senhas** → senha atual + nova → **Alterar**
-- Opção 2: [rad.cvm.gov.br/ENET](https://www.rad.cvm.gov.br/ENET) → login → ícone do triângulo verde → **Alteração de senha**
-
-**Para desbloquear conta suspensa:**
-- E-mail: `suporteexterno@cvm.gov.br`
-- Telefone: `0800-944-3535`
-
-Após resolver, atualize o Secret `CVM_PASSWORD` em **Settings → Secrets**.
-
-> **Nota:** os sistemas da CVM ficam offline para manutenção alguns dias por ano.
-> Verifique avisos em [gov.br/cvm](https://www.gov.br/cvm/pt-br) antes de acionar o suporte.
->
-> **Atenção:** ao renovar senha após expiração prolongada, a B3 pode suspender a conta
-> por excesso de tentativas. Neste caso, contate o suporte pedindo também o desbloqueio.
-
-## 📝 Logs e Debugging
-
-Veja os logs no GitHub Actions:
-1. **Actions → IPE Hourly Watcher → seu run**
-2. **Run IPE watcher** → expanda para ver output
-
-Localmente:
 ```bash
-CVM_USERNAME=seu_login CVM_PASSWORD=sua_senha python ipe_watcher.py
+python -m pytest tests -q
+
+CVM_USERNAME=... CVM_PASSWORD=... TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... \
+DEEPSEEK_API_KEY=... python ipe_watcher.py
 ```
 
-## 🔒 Segurança
+Atenção: rodar localmente envia mensagens reais e grava estado em `datasets/`.
 
-- ✅ Credenciais em secrets, não no repo
-- ✅ Dedup automático (não reprocessa documentos)
-- ✅ Cache privado via GitHub Actions
-- ✅ Repo público é seguro (secrets mascarados nos logs)
+## Documentação
 
-## 📚 Documentação
-
-Veja `CLAUDE.md` para ajuda de desenvolvimento e customizações avançadas.
-
----
-
-**Precisa ajuda?** Abra uma issue no GitHub.
+`CLAUDE.md` traz arquitetura, regras e customizações em detalhe.

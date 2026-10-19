@@ -443,7 +443,6 @@ def test_main_processes_one_new_document(tmp_path, monkeypatch):
         patch("ipe_watcher.extract_text", return_value="Texto do documento"),
         patch("ipe_watcher.call_llm", return_value="- Fato: X\n- Impacto: Y\n- Risco: Z"),
         patch("ipe_watcher.send_notification") as mock_notify,
-        patch("ipe_watcher.git_commit_back"),
         patch("ipe_watcher.create_session", return_value=MagicMock()),
     ):
         ipe_watcher.main()
@@ -516,7 +515,6 @@ def test_main_queries_weekend_dates_on_monday(tmp_path, monkeypatch):
     with (
         patch("ipe_watcher.download_ipe_b3", side_effect=fake_download),
         patch("ipe_watcher.load_company_map", return_value={}),
-        patch("ipe_watcher.git_commit_back"),
         patch("ipe_watcher.create_session", return_value=MagicMock()),
         patch("ipe_watcher.datetime") as mock_dt,
     ):
@@ -557,7 +555,6 @@ def test_main_queries_only_today_on_intraday_rerun(tmp_path, monkeypatch):
     with (
         patch("ipe_watcher.download_ipe_b3", side_effect=fake_download),
         patch("ipe_watcher.load_company_map", return_value={}),
-        patch("ipe_watcher.git_commit_back"),
         patch("ipe_watcher.create_session", return_value=MagicMock()),
         patch("ipe_watcher.datetime") as mock_dt,
     ):
@@ -796,7 +793,6 @@ def test_main_processes_vlmo_document(tmp_path, monkeypatch):
         patch("ipe_watcher.send_vlmo_batch_notification") as mock_vlmo_notify,
         patch("ipe_watcher.call_llm")                      as mock_llm,
         patch("ipe_watcher.send_notification")             as mock_notify,
-        patch("ipe_watcher.git_commit_back"),
         patch("ipe_watcher.create_session",                return_value=MagicMock()),
     ):
         ipe_watcher.main()
@@ -831,7 +827,6 @@ def test_main_saves_last_run_date_after_run(tmp_path, monkeypatch):
     with (
         patch("ipe_watcher.download_ipe_b3", return_value=empty_df),
         patch("ipe_watcher.load_company_map", return_value={}),
-        patch("ipe_watcher.git_commit_back"),
         patch("ipe_watcher.create_session", return_value=MagicMock()),
         patch("ipe_watcher.datetime") as mock_dt,
     ):
@@ -950,7 +945,6 @@ def main_env(tmp_path, monkeypatch):
     monkeypatch.setattr(ipe_watcher, "LAST_RUN_DATE_FILE", state)
     monkeypatch.setattr(ipe_watcher, "load_company_map", lambda: _FAKE_MAP)
     monkeypatch.setattr(ipe_watcher, "create_session", MagicMock)
-    monkeypatch.setattr(ipe_watcher, "git_commit_back", lambda: None)
     monkeypatch.setattr(ipe_watcher, "download_pdf", lambda *_: b"%PDF")
     monkeypatch.setattr(ipe_watcher, "extract_text", lambda _b: "texto")
     monkeypatch.setattr(ipe_watcher, "call_llm", lambda **_: "- Fato: X")
@@ -1156,3 +1150,29 @@ def test_download_logs_link_attribute_names(b3_env, caplog):
     ipe_watcher.download_ipe_b3(_b3_session(SAMPLE_B3_XML), date(2026, 4, 22))
     assert "B3 Link attributes" in caplog.text
     assert "Especie" in caplog.text
+
+
+# ── State persistence ────────────────────────────────────────────────────────
+
+def test_load_processed_ids_merges_legacy_cache_copy(tmp_path, monkeypatch):
+    git_copy, cache_copy = tmp_path / "ids.json", tmp_path / "ids.cache.json"
+    git_copy.write_text('["a", "b"]')
+    cache_copy.write_text('["b", "c"]')
+    monkeypatch.setattr(ipe_watcher, "PROCESSED_IDS_FILE", git_copy)
+    monkeypatch.setattr(ipe_watcher, "LEGACY_CACHE_IDS_FILE", cache_copy)
+    assert ipe_watcher.load_processed_ids() == {"a", "b", "c"}
+
+
+def test_abort_marks_alert_sent_only_when_delivered(tmp_path, monkeypatch):
+    marker = tmp_path / ".alert_sent"
+    monkeypatch.setattr(ipe_watcher, "ALERT_SENT_MARKER", marker)
+
+    monkeypatch.setattr(ipe_watcher, "send_message", lambda _t: False)
+    with pytest.raises(SystemExit):
+        ipe_watcher._abort("x", RuntimeError("y"), "z")
+    assert not marker.exists()
+
+    monkeypatch.setattr(ipe_watcher, "send_message", lambda _t: True)
+    with pytest.raises(SystemExit):
+        ipe_watcher._abort("x", RuntimeError("y"), "z")
+    assert marker.exists()

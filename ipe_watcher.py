@@ -9,7 +9,6 @@ import json
 import logging
 import os
 import re
-import subprocess
 import sys
 import time
 import unicodedata
@@ -51,6 +50,13 @@ class B3RequestError(Exception):
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 PROCESSED_IDS_FILE  = Path("datasets/ipe_processed_ids.json")
+# Until 2026-10 the processed IDs lived only in the Actions cache. The workflow
+# restores the last cache here so its IDs are merged once into the git copy;
+# the cache expires on its own a week after it stops being written.
+LEGACY_CACHE_IDS_FILE = Path("datasets/ipe_processed_ids.cache.json")
+# Written when this script already sent a Telegram alert about its own
+# failure, so the workflow's generic failure alert doesn't repeat it.
+ALERT_SENT_MARKER  = Path(".alert_sent")
 LAST_RUN_DATE_FILE  = Path("datasets/ipe_last_run_date.txt")
 SKIPPED_LOG_FILE   = Path("datasets/ipe_skipped_log.csv")
 INDEX_LATEST_FILE  = Path("datasets/ipe_index_latest.csv")
@@ -346,10 +352,12 @@ def make_hash(row: pd.Series) -> str:
 
 
 def load_processed_ids() -> set[str]:
-    if not PROCESSED_IDS_FILE.exists():
-        return set()
-    with open(PROCESSED_IDS_FILE, encoding="utf-8") as f:
-        return set(json.load(f))
+    ids: set[str] = set()
+    for path in (PROCESSED_IDS_FILE, LEGACY_CACHE_IDS_FILE):
+        if path.exists():
+            with open(path, encoding="utf-8") as f:
+                ids |= set(json.load(f))
+    return ids
 
 
 def save_processed_ids(ids: set[str]) -> None:
@@ -608,36 +616,6 @@ def send_vlmo_batch_notification(vlmo_by_company: dict) -> bool:
     return send_blocks(header, blocks)
 
 
-# ── Git commit-back ───────────────────────────────────────────────────────────
-
-def git_commit_back() -> None:
-    """Commit ipe_skipped_log.csv back to the repo."""
-    files = [str(SKIPPED_LOG_FILE), str(LAST_RUN_DATE_FILE)]
-    existing = [f for f in files if Path(f).exists()]
-    if not existing:
-        return
-
-    now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-    try:
-        subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
-        subprocess.run(
-            ["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"],
-            check=True,
-        )
-        subprocess.run(["git", "add"] + existing, check=True)
-        result = subprocess.run(["git", "diff", "--cached", "--quiet"])
-        if result.returncode == 0:
-            logger.info("No changes to commit.")
-            return
-        subprocess.run(["git", "commit", "-m", f"ipe update {now_utc}"], check=True)
-        # The remote may have moved since checkout (manual pushes, other runs).
-        subprocess.run(["git", "pull", "--rebase"], check=True)
-        subprocess.run(["git", "push"], check=True)
-        logger.info("Committed and pushed: %s", existing)
-    except subprocess.CalledProcessError as exc:
-        logger.error("git commit-back failed: %s", exc)
-
-
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def _abort(title: str, exc: Exception, action: str) -> None:
@@ -645,7 +623,8 @@ def _abort(title: str, exc: Exception, action: str) -> None:
     msg = f"🚨 *CVM-Alerts parou*: {title}\nErro: `{exc}`\nAção: {action}"
     logger.critical("%s — aborting run: %s", title, exc)
     try:
-        send_message(msg)
+        if send_message(msg):
+            ALERT_SENT_MARKER.touch()
     except Exception:
         pass  # best-effort; don't mask the original error
     sys.exit(1)
@@ -810,7 +789,6 @@ def main() -> None:
     if new_records:
         pd.DataFrame(new_records).to_csv(INDEX_LATEST_FILE, index=False)
 
-    git_commit_back()
     logger.info("Done. Processed %d new documents.", len(new_records))
 
     if failed_dates or undelivered:
