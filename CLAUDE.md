@@ -4,7 +4,7 @@
 
 **cvm-alerts** manda alertas no Telegram para as empresas da cobertura (`config/cnpj_map.yaml`):
 
-1. **Documentos IPE** (Fato Relevante, Comunicados, Avisos) com resumo por LLM — `ipe_watcher.py`, de hora em hora.
+1. **Documentos IPE** (Fato Relevante, Comunicados, Avisos) com resumo por LLM — `ipe_watcher.py`, a cada 3 h (09h–21h BRT).
 2. **Negociações de insiders (VLMO)** — aviso diário (PDF via B3, em `ipe_watcher.py`) e resumo semanal de destaques P1/P2 (CSV de dados abertos da CVM, em `br_stock_trading.py`).
 
 ### Fluxo do watcher (`ipe_watcher.py`)
@@ -158,7 +158,7 @@ Exemplo de resposta da B3: `SAMPLE_B3_XML` em `tests/test_ipe_watcher.py`. O wor
 
 | Workflow | Arquivo | Quando | Faz |
 |---|---|---|---|
-| B3 IPE & VLMO Monitor | `ipe_watcher.yml` | de hora em hora 06h–22h BRT, seg–sex | roda o watcher; commita o estado (mesmo se falhar) |
+| B3 IPE & VLMO Monitor | `ipe_watcher.yml` | a cada 3 h, 09h–21h BRT, seg–sex | roda o watcher; commita o estado (mesmo se falhar) |
 | CVM Weekly VLMO Pipeline | `vlmo_weekly.yml` | segunda 09h07 BRT | resumo semanal; artifact `vlmo-consolidated` (90 dias); commita estado e relatório |
 | Tests | `tests.yml` | PR, push na `main`, segunda (auditoria) | pytest; `pip-audit`; busca de credenciais no código |
 

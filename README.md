@@ -46,7 +46,7 @@ tickers:
 
 ### Fatos Relevantes e Comunicados (`ipe_watcher.py`)
 
-De hora em hora, das 06h às 22h BRT, seg–sex. Para cada documento novo de uma empresa da cobertura:
+A cada 3 h, das 09h às 21h BRT (09h, 12h, 15h, 18h, 21h), seg–sex. Para cada documento novo de uma empresa da cobertura:
 
 - **Fato Relevante** e **Comunicado ao Mercado**: sempre.
 - **Aviso / Comunicado aos Acionistas**: exceto rotina (pagamento de dividendos/JCP já anunciado, calendário de eventos, atas de AGO/AGE sem pauta material, política de divulgação, código de conduta, estatuto sem mudança de capital ou controle). Palavras-chave como aquisição, OPA, recuperação judicial, renúncia ou CVM forçam o envio.
@@ -78,7 +78,7 @@ Formato:
 
 | Workflow | Arquivo | Quando |
 |---|---|---|
-| B3 IPE & VLMO Monitor | `ipe_watcher.yml` | de hora em hora, 06h–22h BRT, seg–sex |
+| B3 IPE & VLMO Monitor | `ipe_watcher.yml` | a cada 3 h, 09h–21h BRT, seg–sex |
 | CVM Weekly VLMO Pipeline | `vlmo_weekly.yml` | segunda, 09h07 BRT |
 | Tests | `tests.yml` | todo PR e push na `main`; auditoria de dependências toda segunda |
 
