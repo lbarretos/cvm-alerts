@@ -64,17 +64,30 @@ def _format_alert(row: pd.Series) -> str:
     )
 
 
-def _send(token: str, chat_id: str, text: str) -> None:
+def _send(token: str, chat_id: str, text: str) -> bool:
+    """Send one message. Returns True on success.
+
+    If Telegram rejects the Markdown (HTTP 400, e.g. an unbalanced '*' or '_'
+    in LLM output or a cut at MSG_LIMIT), resend as plain text rather than
+    lose the message.
+    """
+    url = TELEGRAM_API.format(token=token)
     try:
         resp = requests.post(
-            TELEGRAM_API.format(token=token),
+            url,
             json={'chat_id': chat_id, 'text': text, 'parse_mode': 'Markdown'},
             timeout=10,
         )
+        if resp.status_code == 400:
+            logger.warning(f"Telegram rejected Markdown, resending as plain text: {resp.text[:200]}")
+            resp = requests.post(url, json={'chat_id': chat_id, 'text': text}, timeout=10)
         if not resp.ok:
             logger.warning(f"Telegram error {resp.status_code}: {resp.text[:200]}")
+            return False
+        return True
     except requests.RequestException as exc:
         logger.warning(f"Telegram request failed: {exc}")
+        return False
 
 
 def _chunk_messages(header: str, blocks: list, limit: int) -> list:
@@ -119,11 +132,13 @@ def send_alerts(alerts_df: pd.DataFrame) -> None:
                 _send(token, chat_id, msg)
 
 
-def send_message(text: str) -> None:
+def send_message(text: str) -> bool:
     """Send a single free-form Markdown message to all configured Telegram recipients.
 
     Truncates to MSG_LIMIT characters. Network errors are logged, not raised.
+    Returns True only if every recipient received the message.
     Raises KeyError if TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID are not set.
     """
-    for token, chat_id in _get_all_recipients():
-        _send(token, chat_id, text[:MSG_LIMIT])
+    results = [_send(token, chat_id, text[:MSG_LIMIT])
+               for token, chat_id in _get_all_recipients()]
+    return all(results)

@@ -26,7 +26,7 @@ Processados ↓
 
 | Função | Responsabilidade | Customizável |
 |--------|------------------|--------------|
-| `download_ipe_b3()` | Query B3 API, parse XML, enrich. Levanta `CredentialError` em SENHA EXPIRADA/LOGIN INCORRETO | Não (precisa de credenciais) |
+| `download_ipe_b3()` | Query B3 API, parse XML. Trata erros pelo `NUMERO_DO_ERRO` (ver Troubleshooting) | Não (precisa de credenciais) |
 | `load_company_map()` | Ler ccvm/CNPJ/denom do config | Sim (YAML) |
 | `pre_filter()` | Regras de skip (AGO/AGE, dividendos) | Sim (adicione keywords) |
 | `make_hash()` | SHA256 de CNPJ\|DT\|TIPO\|LINK | Não |
@@ -105,9 +105,12 @@ tickers:
 
 ```yaml
 schedule:
-  - cron: '30 8 * * 1-5'  # 08:30 UTC, seg-sex (05:30 BRT)
-  - cron: '0 16 * * 1-5'  # 16:00 UTC, seg-sex (13:00 BRT)
+  - cron: '0 9,12,15,18,21 * * 1-5'  # 06h, 09h, 12h, 15h, 18h BRT, seg-sex
+  - cron: '59 23 * * 1-5'            # 20h59 BRT, seg-sex
 ```
+
+O GitHub atrasa execuções agendadas (às vezes horas). Não há perda: cada
+execução reconsulta desde `ipe_last_run_date.txt` (inclusive).
 
 Converter: [crontab.guru](https://crontab.guru)
 
@@ -133,7 +136,7 @@ Converter: [crontab.guru](https://crontab.guru)
 | Coluna | Fonte | Tipo |
 |--------|-------|------|
 | ccvm | XML `@ccvm` | str |
-| DT_ENTREGA | XML `@DataRef` (converter para ISO) | str (YYYY-MM-DD) |
+| DT_REF | XML `@DataRef` — data de **referência** do documento, não de entrega (converter para ISO) | str (YYYY-MM-DD) |
 | CATEG_DOC | XML `@Categoria` | str |
 | TIPO_DOC | XML `@Tipo` | str |
 | LINK_DOC | XML `@url` | str (direct PDF URL) |
@@ -201,14 +204,29 @@ INFO Done. Processed 1 new documents.
 
 Credenciais não passadas. Verifique GitHub Secrets.
 
-### "SENHA EXPIRADA" ou "LOGIN INCORRETO" (erro 1 da B3)
+### Erros da API B3 (Nota Técnica do Download Múltiplo, §4.2)
 
-Credenciais CVM permanentemente inválidas. O watcher **para imediatamente** com
-`sys.exit(1)` (GitHub Actions fica ❌ vermelho) e envia alerta Telegram.
+| `NUMERO_DO_ERRO` | Significado | Tratamento |
+|---|---|---|
+| `1` | LOGIN INCORRETO (na prática também SENHA EXPIRADA, USUÁRIO SUSPENSO) | `CredentialError` → alerta Telegram + `exit(1)`, sem retry |
+| `22013` | Erro ao gerar o XML | retry (3 tentativas) |
+| `22014` / `22015` / `22017` | Data / hora / tipo de documento inválido | `B3RequestError` → alerta + `exit(1)` (bug no script) |
+| `22016` | Nenhum registro localizado | DataFrame vazio (normal em fim de semana/feriado) |
+| outro | — | `RuntimeError`; a data fica pendente e o run termina com `exit(1)` |
 
-Para renovar:
-1. E-mail: `suporteexterno@cvm.gov.br` | Telefone: `0800-944-3535`
-2. Após receber nova senha, atualize o GitHub Secret `CVM_PASSWORD`
+Semântica (§4.3): a API devolve o link na data da **última ação** sobre o
+documento (liberação, bloqueio, cancelamento), numa janela de até 24h a partir
+de `txtData`/`txtHora`.
+
+### Senha expirada / login incorreto (erro 1)
+
+O watcher **para imediatamente** com `sys.exit(1)` e envia alerta Telegram.
+
+Para trocar a senha:
+1. [cas.bovespa.com.br/cas](https://cas.bovespa.com.br/cas/) → menu "Senhas", **ou**
+   [rad.cvm.gov.br/ENET](https://www.rad.cvm.gov.br/ENET) → "Alteração de senha"
+2. Atualize o GitHub Secret `CVM_PASSWORD`
+3. Conta suspensa: `suporteexterno@cvm.gov.br` | `0800-944-3535`
 
 > ⚠️ Os sistemas CVM ficam offline para manutenção periodicamente (verificar
 > aviso em gov.br/cvm). Durante a janela de manutenção, aguardar normalização
