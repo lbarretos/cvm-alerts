@@ -1112,3 +1112,18 @@ def test_send_message_returns_false_when_delivery_fails(monkeypatch):
     fail = MagicMock(status_code=500, ok=False, text="err")
     with patch("telegram_notifier.requests.post", return_value=fail):
         assert telegram_notifier.send_message("hi") is False
+
+
+def test_vlmo_batch_month_label_in_portuguese():
+    data = {"24392": {"ticker": "HAPV3", "denom": "HAPVIDA", "ref_month": "2026-03",
+                      "transactions": [], "primary_link": ""}}
+    with patch("ipe_watcher.send_message", return_value=True) as mock_send:
+        assert ipe_watcher.send_vlmo_batch_notification(data) is True
+    assert "março/2026" in mock_send.call_args[0][0]
+
+
+def test_download_logs_link_attribute_names(b3_env, caplog):
+    caplog.set_level("INFO", logger="ipe_watcher")
+    ipe_watcher.download_ipe_b3(_b3_session(SAMPLE_B3_XML), date(2026, 4, 22))
+    assert "B3 Link attributes" in caplog.text
+    assert "Especie" in caplog.text

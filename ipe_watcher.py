@@ -13,7 +13,6 @@ import subprocess
 import sys
 import time
 import unicodedata
-import zipfile
 import xml.etree.ElementTree as ET
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
@@ -56,6 +55,13 @@ SKIPPED_LOG_FILE   = Path("datasets/ipe_skipped_log.csv")
 INDEX_LATEST_FILE  = Path("datasets/ipe_index_latest.csv")
 CNPJ_MAP_FILE      = Path("config/cnpj_map.yaml")
 SYSTEM_PROMPT_FILE = Path("config/system_prompt_ipe.txt")
+
+# Characters of PDF text sent to the LLM. Filings often open with a long
+# letterhead/disclaimer; 4000 chars frequently cut before the substance.
+LLM_TEXT_CHARS = 12000
+
+MONTHS_PT = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho",
+             "agosto", "setembro", "outubro", "novembro", "dezembro"]
 
 B3_API_URL = "https://seguro.bmfbovespa.com.br/rad/download/SolicitaDownload.asp"
 
@@ -225,8 +231,14 @@ def download_ipe_b3(session, query_date: date) -> pd.DataFrame:
             raise B3RequestError(f"B3 API error {code}: {desc}") from exc
         raise exc
 
+    links = root.findall("Link")
+    if links:
+        # The technical note documents no attribute for the IPE subject that
+        # txtAssuntoIPE=SIM enables; log what the API actually sends.
+        logger.info("B3 Link attributes: %s", sorted({k for l in links for k in l.attrib}))
+
     rows = []
-    for link in root.findall("Link"):
+    for link in links:
         rows.append({
             "ccvm":      link.get("ccvm", ""),
             "DT_REF":    _parse_dataref(link.get("DataRef", "")),
@@ -376,7 +388,7 @@ def download_pdf(session, url: str) -> bytes | None:
 
 
 def extract_text(pdf_bytes: bytes) -> str:
-    """Extract up to 4000 characters from the first pages of a PDF."""
+    """Extract up to LLM_TEXT_CHARS characters from the first pages of a PDF."""
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             texts = []
@@ -385,9 +397,9 @@ def extract_text(pdf_bytes: bytes) -> str:
                 t = page.extract_text() or ""
                 texts.append(t)
                 total += len(t)
-                if total >= 4000:
+                if total >= LLM_TEXT_CHARS:
                     break
-            return "".join(texts)[:4000]
+            return "".join(texts)[:LLM_TEXT_CHARS]
     except Exception as exc:
         logger.warning("pdfplumber failed: %s", exc)
         return ""
@@ -556,7 +568,8 @@ def send_vlmo_batch_notification(vlmo_by_company: dict) -> bool:
 
     ref_month = next(iter(vlmo_by_company.values())).get("ref_month", "")
     try:
-        month_label = datetime.strptime(ref_month, "%Y-%m").strftime("%B/%Y")
+        ref = datetime.strptime(ref_month, "%Y-%m")
+        month_label = f"{MONTHS_PT[ref.month - 1]}/{ref.year}"
     except (ValueError, TypeError):
         month_label = ref_month or "—"
 
