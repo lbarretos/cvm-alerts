@@ -11,6 +11,12 @@ on:
 permissions:
   contents: write   # required for git push of ipe_skipped_log.csv
 
+# Overlapping runs (manual dispatch + schedule) would race on the dedup cache
+# and send duplicate alerts.
+concurrency:
+  group: ipe-watcher
+  cancel-in-progress: false
+
 jobs:
   ipe-watcher:
     name: Run IPE Watcher

@@ -43,7 +43,7 @@ def test_download_ipe_b3_returns_dataframe(monkeypatch):
     assert "ccvm" in df.columns
     assert "CATEG_DOC" in df.columns
     assert "LINK_DOC" in df.columns
-    assert df.iloc[0]["DT_ENTREGA"] == "2026-04-22"
+    assert df.iloc[0]["DT_REF"] == "2026-04-22"
 
 
 def test_download_ipe_b3_raises_without_credentials(monkeypatch):
@@ -211,7 +211,7 @@ def _row(categ: str, assunto: str) -> pd.Series:
         "TIPO_DOC": categ,
         "ASSUNTO": assunto,
         "DENOM_CIA": "TEST CO",
-        "DT_ENTREGA": "2026-04-22",
+        "DT_REF": "2026-04-22",
     })
 
 
@@ -310,7 +310,7 @@ def test_ata_age_with_force_keyword():
 def test_make_hash_deterministic():
     row = pd.Series({
         "CNPJ_CIA": "00.494.205/0001-31",
-        "DT_ENTREGA": "2026-04-22",
+        "DT_REF": "2026-04-22",
         "TIPO_DOC": "Fato Relevante",
         "LINK_DOC": "http://example.com/doc.pdf",
     })
@@ -321,8 +321,8 @@ def test_make_hash_deterministic():
 
 
 def test_make_hash_differs_by_link():
-    row1 = pd.Series({"CNPJ_CIA": "X", "DT_ENTREGA": "Y", "TIPO_DOC": "Z", "LINK_DOC": "A"})
-    row2 = pd.Series({"CNPJ_CIA": "X", "DT_ENTREGA": "Y", "TIPO_DOC": "Z", "LINK_DOC": "B"})
+    row1 = pd.Series({"CNPJ_CIA": "X", "DT_REF": "Y", "TIPO_DOC": "Z", "LINK_DOC": "A"})
+    row2 = pd.Series({"CNPJ_CIA": "X", "DT_REF": "Y", "TIPO_DOC": "Z", "LINK_DOC": "B"})
     assert ipe_watcher.make_hash(row1) != ipe_watcher.make_hash(row2)
 
 
@@ -388,7 +388,7 @@ def test_send_notification_formats_message():
     row = pd.Series({
         "CATEG_DOC": "Fato Relevante",
         "DENOM_CIA": "HAPVIDA",
-        "DT_ENTREGA": "2026-04-22",
+        "DT_REF": "2026-04-22",
         "LINK_DOC": "http://example.com/doc.pdf",
     })
     with patch("ipe_watcher.send_message") as mock_send:
@@ -428,7 +428,7 @@ def test_main_processes_one_new_document(tmp_path, monkeypatch):
 
     fake_df = pd.DataFrame([{
         "ccvm":       "24392",
-        "DT_ENTREGA": today,
+        "DT_REF": today,
         "CATEG_DOC":  "Fato Relevante",
         "TIPO_DOC":   "Fato Relevante",
         "LINK_DOC":   "http://example.com/doc.pdf",
@@ -482,7 +482,8 @@ def test_save_last_run_date_writes_iso_string(tmp_path, monkeypatch):
 # ── query_dates window logic ──────────────────────────────────────────────────
 
 def test_main_queries_weekend_dates_on_monday(tmp_path, monkeypatch):
-    """On Monday (2026-04-20), last run was Friday (2026-04-17): must query Sat, Sun, Mon."""
+    """On Monday (2026-04-20), last run was Friday (2026-04-17): must query
+    Fri (again — the last run may have missed its evening), Sat, Sun, Mon."""
     import ipe_watcher
 
     monday   = date(2026, 4, 20)
@@ -503,7 +504,7 @@ def test_main_queries_weekend_dates_on_monday(tmp_path, monkeypatch):
     monkeypatch.setenv("CVM_USERNAME", "fake-login")
     monkeypatch.setenv("CVM_PASSWORD", "fake-senha")
 
-    empty_df = pd.DataFrame(columns=["ccvm", "DT_ENTREGA", "CATEG_DOC",
+    empty_df = pd.DataFrame(columns=["ccvm", "DT_REF", "CATEG_DOC",
                                       "TIPO_DOC", "LINK_DOC", "ASSUNTO", "Situacao"])
 
     queried_dates = []
@@ -524,7 +525,7 @@ def test_main_queries_weekend_dates_on_monday(tmp_path, monkeypatch):
         mock_dt.utcnow.return_value.strftime.return_value = "2026-04-20 09:00 UTC"
         ipe_watcher.main()
 
-    assert queried_dates == [saturday, sunday, monday]
+    assert queried_dates == [friday, saturday, sunday, monday]
 
 
 def test_main_queries_only_today_on_intraday_rerun(tmp_path, monkeypatch):
@@ -545,7 +546,7 @@ def test_main_queries_only_today_on_intraday_rerun(tmp_path, monkeypatch):
     monkeypatch.setenv("CVM_USERNAME", "fake-login")
     monkeypatch.setenv("CVM_PASSWORD", "fake-senha")
 
-    empty_df = pd.DataFrame(columns=["ccvm", "DT_ENTREGA", "CATEG_DOC",
+    empty_df = pd.DataFrame(columns=["ccvm", "DT_REF", "CATEG_DOC",
                                       "TIPO_DOC", "LINK_DOC", "ASSUNTO", "Situacao"])
     queried_dates = []
 
@@ -760,7 +761,7 @@ def test_main_processes_vlmo_document(tmp_path, monkeypatch):
     }
     fake_df = pd.DataFrame([{
         "ccvm":       "24392",
-        "DT_ENTREGA": today,
+        "DT_REF": today,
         "CATEG_DOC":  ipe_watcher.VLMO_CATEGORY,
         "TIPO_DOC":   "Valores Mobiliários",
         "LINK_DOC":   "http://example.com/vlmo.pdf",
@@ -815,7 +816,7 @@ def test_main_saves_last_run_date_after_run(tmp_path, monkeypatch):
     monkeypatch.setenv("CVM_USERNAME", "fake-login")
     monkeypatch.setenv("CVM_PASSWORD", "fake-senha")
 
-    empty_df = pd.DataFrame(columns=["ccvm", "DT_ENTREGA", "CATEG_DOC",
+    empty_df = pd.DataFrame(columns=["ccvm", "DT_REF", "CATEG_DOC",
                                       "TIPO_DOC", "LINK_DOC", "ASSUNTO", "Situacao"])
 
     with (
@@ -830,3 +831,284 @@ def test_main_saves_last_run_date_after_run(tmp_path, monkeypatch):
         ipe_watcher.main()
 
     assert state_file.read_text() == "2026-04-21"
+
+
+# ── B3 error codes (CVM technical note §4.2) ─────────────────────────────────
+
+def _b3_session(*bodies) -> MagicMock:
+    """Mock session whose successive POSTs return the given XML bodies."""
+    resps = []
+    for body in bodies:
+        r = MagicMock()
+        r.content = body
+        r.raise_for_status = MagicMock()
+        resps.append(r)
+    session = MagicMock()
+    session.post.side_effect = resps
+    return session
+
+
+def _b3_error(code: str, desc: str) -> bytes:
+    return (
+        b'<?xml version="1.0" encoding="ISO-8859-1" ?><ERROS>'
+        b"<NUMERO_DO_ERRO>" + code.encode() + b"</NUMERO_DO_ERRO>"
+        b"<DESCRICAO_DO_ERRO>" + desc.encode("iso-8859-1") + b"</DESCRICAO_DO_ERRO>"
+        b"</ERROS>"
+    )
+
+
+@pytest.fixture
+def b3_env(monkeypatch):
+    monkeypatch.setenv("CVM_USERNAME", "testuser")
+    monkeypatch.setenv("CVM_PASSWORD", "testpass")
+    monkeypatch.setattr(ipe_watcher.time, "sleep", lambda _s: None)
+
+
+def test_no_records_error_returns_empty_dataframe(b3_env):
+    session = _b3_session(_b3_error("22016", "Nenhum registro localizado"))
+    df = ipe_watcher.download_ipe_b3(session, date(2026, 4, 18))
+    assert df.empty
+    assert "DT_REF" in df.columns
+
+
+def test_error_number_1_is_credential_error_whatever_the_text(b3_env):
+    session = _b3_session(_b3_error("1", "MENSAGEM NOVA DA B3"))
+    with pytest.raises(ipe_watcher.CredentialError):
+        ipe_watcher.download_ipe_b3(session, date(2026, 4, 22))
+
+
+def test_credential_text_matched_without_accents_or_punctuation(b3_env):
+    session = _b3_session(_b3_error("99", "Usuario suspenso."))
+    with pytest.raises(ipe_watcher.CredentialError):
+        ipe_watcher.download_ipe_b3(session, date(2026, 4, 22))
+
+
+def test_credential_error_is_not_retried(b3_env):
+    session = _b3_session(_b3_error("1", "SENHA EXPIRADA"), b"unused")
+    with pytest.raises(ipe_watcher.CredentialError):
+        ipe_watcher.download_ipe_b3(session, date(2026, 4, 22))
+    assert session.post.call_count == 1
+
+
+@pytest.mark.parametrize("code", ["22014", "22015", "22017"])
+def test_bad_request_errors_raise_b3_request_error(b3_env, code):
+    session = _b3_session(_b3_error(code, "Parametro invalido"))
+    with pytest.raises(ipe_watcher.B3RequestError, match=code):
+        ipe_watcher.download_ipe_b3(session, date(2026, 4, 22))
+
+
+def test_transient_error_22013_is_retried(b3_env):
+    session = _b3_session(_b3_error("22013", "Erro ao gerar o XML"), SAMPLE_B3_XML)
+    df = ipe_watcher.download_ipe_b3(session, date(2026, 4, 22))
+    assert len(df) == 2
+    assert session.post.call_count == 2
+
+
+def test_unparseable_response_is_retried_then_raises(b3_env):
+    html = b"<html><body>Sistema em manutencao"
+    session = _b3_session(html, html, html)
+    with pytest.raises(Exception):
+        ipe_watcher.download_ipe_b3(session, date(2026, 4, 22))
+    assert session.post.call_count == ipe_watcher.B3_MAX_ATTEMPTS
+
+
+# ── main(): window, failures, delivery ───────────────────────────────────────
+
+_FAKE_MAP = {
+    "24392": {
+        "ticker": "HAPV3",
+        "cnpj": "05.197.443/0001-38",
+        "cnpj_digits": "05197443000138",
+        "denom": "HAPVIDA",
+    }
+}
+
+
+def _doc_df(dt_ref: str, link: str = "http://example.com/doc.pdf",
+            categ: str = "Fato Relevante", assunto: str = "Acordo operacional") -> pd.DataFrame:
+    return pd.DataFrame([{
+        "ccvm": "24392", "DT_REF": dt_ref, "CATEG_DOC": categ, "TIPO_DOC": categ,
+        "LINK_DOC": link, "ASSUNTO": assunto, "Situacao": "Liberado",
+    }])
+
+
+@pytest.fixture
+def main_env(tmp_path, monkeypatch):
+    state = tmp_path / "last_run_date.txt"
+    monkeypatch.setattr(ipe_watcher, "PROCESSED_IDS_FILE", tmp_path / "ids.json")
+    monkeypatch.setattr(ipe_watcher, "SKIPPED_LOG_FILE",   tmp_path / "skipped.csv")
+    monkeypatch.setattr(ipe_watcher, "INDEX_LATEST_FILE",  tmp_path / "latest.csv")
+    monkeypatch.setattr(ipe_watcher, "LAST_RUN_DATE_FILE", state)
+    monkeypatch.setattr(ipe_watcher, "load_company_map", lambda: _FAKE_MAP)
+    monkeypatch.setattr(ipe_watcher, "create_session", MagicMock)
+    monkeypatch.setattr(ipe_watcher, "git_commit_back", lambda: None)
+    monkeypatch.setattr(ipe_watcher, "download_pdf", lambda *_: b"%PDF")
+    monkeypatch.setattr(ipe_watcher, "extract_text", lambda _b: "texto")
+    monkeypatch.setattr(ipe_watcher, "call_llm", lambda **_: "- Fato: X")
+    monkeypatch.setattr(ipe_watcher.time, "sleep", lambda _s: None)
+    return state
+
+
+def _run_main(today: date) -> None:
+    with patch("ipe_watcher.datetime") as mock_dt:
+        mock_dt.now.return_value.date.return_value = today
+        mock_dt.utcnow.return_value.strftime.return_value = "x"
+        ipe_watcher.main()
+
+
+def test_main_processes_doc_whose_reference_date_precedes_window(main_env, monkeypatch):
+    """DataRef is the reference date, not the delivery date: a doc delivered
+    today with an older DataRef must still be notified."""
+    today = date(2026, 4, 21)
+    main_env.write_text(today.isoformat())
+    monkeypatch.setattr(ipe_watcher, "download_ipe_b3", lambda _s, _d: _doc_df("2026-03-31"))
+    sent = []
+    monkeypatch.setattr(ipe_watcher, "send_notification", lambda row, _s: sent.append(row) or True)
+
+    _run_main(today)
+
+    assert len(sent) == 1
+
+
+def test_main_all_dates_failing_alerts_and_exits_nonzero(main_env, monkeypatch):
+    today = date(2026, 4, 21)
+    main_env.write_text("2026-04-20")
+
+    def fail(_s, _d):
+        raise RuntimeError("B3 API error 22013: Erro ao gerar o XML")
+
+    alerts = []
+    monkeypatch.setattr(ipe_watcher, "download_ipe_b3", fail)
+    monkeypatch.setattr(ipe_watcher, "send_message", lambda text: alerts.append(text) or True)
+
+    with pytest.raises(SystemExit) as exc_info:
+        _run_main(today)
+
+    assert exc_info.value.code == 1
+    assert alerts and "indisponível" in alerts[0]
+    assert main_env.read_text() == "2026-04-20", "last_run_date must not advance"
+
+
+def test_main_failed_date_stops_last_run_date_and_exits_nonzero(main_env, monkeypatch):
+    """Sat fails, Fri/Sun/Mon succeed: docs still processed, last_run_date
+    stays at Fri so Sat is queried again, run exits 1 for visibility."""
+    friday, saturday, monday = date(2026, 4, 17), date(2026, 4, 18), date(2026, 4, 20)
+    main_env.write_text(friday.isoformat())
+
+    def download(_s, qd):
+        if qd == saturday:
+            raise RuntimeError("timeout")
+        if qd == monday:
+            return _doc_df("2026-04-20")
+        return _doc_df("2026-04-01").iloc[0:0]
+
+    sent = []
+    monkeypatch.setattr(ipe_watcher, "download_ipe_b3", download)
+    monkeypatch.setattr(ipe_watcher, "send_notification", lambda row, _s: sent.append(row) or True)
+
+    with pytest.raises(SystemExit) as exc_info:
+        _run_main(monday)
+
+    assert exc_info.value.code == 1
+    assert len(sent) == 1
+    assert main_env.read_text() == friday.isoformat()
+
+
+def test_main_request_error_aborts_with_alert(main_env, monkeypatch):
+    main_env.write_text("2026-04-21")
+
+    def bad(_s, _d):
+        raise ipe_watcher.B3RequestError("B3 API error 22014: Data informada inválida")
+
+    alerts = []
+    monkeypatch.setattr(ipe_watcher, "download_ipe_b3", bad)
+    monkeypatch.setattr(ipe_watcher, "send_message", lambda text: alerts.append(text) or True)
+
+    with pytest.raises(SystemExit) as exc_info:
+        _run_main(date(2026, 4, 21))
+
+    assert exc_info.value.code == 1
+    assert "22014" in alerts[0]
+
+
+def test_credential_alert_points_to_cas_and_enet(main_env, monkeypatch):
+    main_env.write_text("2026-04-21")
+
+    def cred(_s, _d):
+        raise ipe_watcher.CredentialError("SENHA EXPIRADA")
+
+    alerts = []
+    monkeypatch.setattr(ipe_watcher, "download_ipe_b3", cred)
+    monkeypatch.setattr(ipe_watcher, "send_message", lambda text: alerts.append(text) or True)
+
+    with pytest.raises(SystemExit):
+        _run_main(date(2026, 4, 21))
+
+    assert "cas.bovespa.com.br" in alerts[0]
+    assert "rad.cvm.gov.br/ENET" in alerts[0]
+    assert "conteudo.cvm.gov.br" not in alerts[0]
+
+
+def test_main_undelivered_notification_is_retried_next_run(main_env, monkeypatch):
+    today = date(2026, 4, 21)
+    main_env.write_text(today.isoformat())
+    monkeypatch.setattr(ipe_watcher, "download_ipe_b3", lambda _s, _d: _doc_df("2026-04-21"))
+
+    monkeypatch.setattr(ipe_watcher, "send_notification", lambda _r, _s: False)
+    with pytest.raises(SystemExit) as exc_info:
+        _run_main(today)
+    assert exc_info.value.code == 1
+    assert ipe_watcher.load_processed_ids() == set()
+
+    sent = []
+    monkeypatch.setattr(ipe_watcher, "send_notification", lambda row, _s: sent.append(row) or True)
+    _run_main(today)
+    assert len(sent) == 1
+    assert len(ipe_watcher.load_processed_ids()) == 1
+
+
+def test_main_skipped_doc_logged_once_across_runs(main_env, monkeypatch):
+    today = date(2026, 4, 21)
+    main_env.write_text(today.isoformat())
+    df = _doc_df("2026-04-21", categ="Aviso aos Acionistas", assunto="Pagamento de dividendos")
+    monkeypatch.setattr(ipe_watcher, "download_ipe_b3", lambda _s, _d: df)
+
+    _run_main(today)
+    _run_main(today)
+
+    lines = ipe_watcher.SKIPPED_LOG_FILE.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 2  # header + one row
+
+
+def test_main_vlmo_not_marked_processed_when_batch_undelivered(main_env, monkeypatch):
+    today = date(2026, 4, 21)
+    main_env.write_text(today.isoformat())
+    df = _doc_df("2026-03-01", categ=ipe_watcher.VLMO_CATEGORY)
+    monkeypatch.setattr(ipe_watcher, "download_ipe_b3", lambda _s, _d: df)
+    monkeypatch.setattr(ipe_watcher, "parse_vlmo_pdf", lambda _b: [])
+    monkeypatch.setattr(ipe_watcher, "send_vlmo_batch_notification", lambda _v: False)
+
+    with pytest.raises(SystemExit):
+        _run_main(today)
+
+    assert ipe_watcher.load_processed_ids() == set()
+
+
+# ── telegram_notifier delivery result ────────────────────────────────────────
+
+def test_send_falls_back_to_plain_text_on_markdown_rejection():
+    import telegram_notifier
+    bad, ok = MagicMock(status_code=400, ok=False, text="can't parse entities"), \
+        MagicMock(status_code=200, ok=True)
+    with patch("telegram_notifier.requests.post", side_effect=[bad, ok]) as post:
+        assert telegram_notifier._send("t", "c", "*unbalanced") is True
+    assert "parse_mode" not in post.call_args_list[1].kwargs["json"]
+
+
+def test_send_message_returns_false_when_delivery_fails(monkeypatch):
+    import telegram_notifier
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "c")
+    fail = MagicMock(status_code=500, ok=False, text="err")
+    with patch("telegram_notifier.requests.post", return_value=fail):
+        assert telegram_notifier.send_message("hi") is False

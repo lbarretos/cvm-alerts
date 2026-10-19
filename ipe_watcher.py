@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import time
+import unicodedata
 import zipfile
 import xml.etree.ElementTree as ET
 from datetime import datetime, date, timedelta
@@ -20,6 +21,7 @@ from pathlib import Path
 
 import pandas as pd
 import pdfplumber
+import requests
 import yaml
 from openai import OpenAI
 
@@ -41,6 +43,12 @@ class CredentialError(Exception):
     (and the operator) are notified.
     """
 
+class B3RequestError(Exception):
+    """Raised when the B3 API rejects our request parameters (errors 22014,
+    22015, 22017). These indicate a bug in this script, not a transient
+    failure, so the run must stop and alert like a credential error.
+    """
+
 # ── Paths ──────────────────────────────────────────────────────────────────────
 PROCESSED_IDS_FILE  = Path("datasets/ipe_processed_ids.json")
 LAST_RUN_DATE_FILE  = Path("datasets/ipe_last_run_date.txt")
@@ -51,11 +59,27 @@ SYSTEM_PROMPT_FILE = Path("config/system_prompt_ipe.txt")
 
 B3_API_URL = "https://seguro.bmfbovespa.com.br/rad/download/SolicitaDownload.asp"
 
-# B3 API error descriptions that indicate permanent credential/access failure.
-# Stored uppercased; comparison uses .upper() to tolerate B3 casing variants.
-# These will never recover on retry — the run must fail immediately.
-# USUÁRIO SUSPENSO: conta bloqueada pela B3 após muitas tentativas com senha errada.
-B3_CREDENTIAL_ERRORS = {"SENHA EXPIRADA", "LOGIN INCORRETO", "USUÁRIO SUSPENSO"}
+# B3 API error numbers, per the CVM technical note (manual_tecnico.html, §4.2):
+#   1     = LOGIN INCORRETO (authentication; SENHA EXPIRADA and USUÁRIO SUSPENSO
+#           are observed in practice — matched by description as a fallback)
+#   22013 = error generating the XML (server-side, transient)
+#   22014 = invalid date, 22015 = invalid time, 22017 = invalid document type
+#   22016 = no records found (not an error for us: empty result)
+B3_ERR_CREDENTIAL = "1"
+B3_ERR_TRANSIENT = "22013"
+B3_ERR_NO_RECORDS = "22016"
+B3_ERR_BAD_REQUEST = {"22014", "22015", "22017"}
+# Descriptions that mean permanent credential/access failure. Matched as
+# substrings after accent-stripping and uppercasing.
+B3_CREDENTIAL_ERRORS = ("SENHA EXPIRADA", "LOGIN INCORRETO", "USUARIO SUSPENSO")
+B3_MAX_ATTEMPTS = 3
+
+# Password maintenance, per the CVM technical note §5.
+PASSWORD_HELP = (
+    "renovar senha em https://cas.bovespa.com.br/cas/ (menu \"Senhas\") "
+    "ou em https://www.rad.cvm.gov.br/ENET (\"Alteração de senha\"); "
+    "depois atualizar o secret CVM\\_PASSWORD"
+)
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -124,11 +148,50 @@ def _parse_dataref(dataref: str) -> str:
         return dataref
 
 
+def _normalize(text: str) -> str:
+    """Uppercase and strip accents: 'Usuário suspenso' → 'USUARIO SUSPENSO'."""
+    nfkd = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in nfkd if not unicodedata.combining(c)).strip().upper()
+
+
+_EMPTY_COLUMNS = ["ccvm", "DT_REF", "CATEG_DOC", "TIPO_DOC", "LINK_DOC", "ASSUNTO", "Situacao"]
+
+
+def _query_b3(session, payload: dict) -> ET.Element:
+    """POST to the B3 API and return the parsed XML root.
+
+    Retries transport errors, unparseable responses (e.g. an HTML maintenance
+    page) and error 22013. Never retries authentication errors, so a wrong
+    password cannot lock the account (USUÁRIO SUSPENSO).
+    """
+    for attempt in range(1, B3_MAX_ATTEMPTS + 1):
+        try:
+            resp = session.post(B3_API_URL, data=payload, timeout=60)
+            resp.raise_for_status()
+            # Pass bytes: the parser honours the ISO-8859-1 declaration.
+            root = ET.fromstring(resp.content)
+            if root.tag == "ERROS" and root.findtext("NUMERO_DO_ERRO", "").strip() == B3_ERR_TRANSIENT:
+                raise RuntimeError(f"B3 API error {B3_ERR_TRANSIENT}: "
+                                   f"{root.findtext('DESCRICAO_DO_ERRO', '').strip()}")
+            return root
+        except (requests.RequestException, ET.ParseError, RuntimeError) as exc:
+            if attempt == B3_MAX_ATTEMPTS:
+                raise
+            logger.warning("B3 API attempt %d failed: %s — retrying", attempt, exc)
+            time.sleep(5 * attempt)
+    raise AssertionError("unreachable")
+
+
 def download_ipe_b3(session, query_date: date) -> pd.DataFrame:
     """Query B3 Multiple Download API for IPE filings on query_date.
 
-    Returns DataFrame with same schema as the old download_ipe_index():
-    CNPJ_CIA, DENOM_CIA, DT_ENTREGA, CATEG_DOC, TIPO_DOC, LINK_DOC, ASSUNTO, _cnpj_digits
+    The API returns links whose *last action* (release, block, cancel) falls
+    in the 24h window starting at txtData/txtHora, so a daily query plus
+    hash dedup catches every release exactly once.
+
+    Returns DataFrame with columns: ccvm, DT_REF, CATEG_DOC, TIPO_DOC,
+    LINK_DOC, ASSUNTO, Situacao. DT_REF is the document's reference date
+    (DataRef), not its delivery date.
     """
     login = os.environ.get("CVM_USERNAME", "")
     senha = os.environ.get("CVM_PASSWORD", "")
@@ -146,36 +209,38 @@ def download_ipe_b3(session, query_date: date) -> pd.DataFrame:
         "txtDocumento":  "IPE",
         "txtAssuntoIPE": "SIM",
     }
-    resp = session.post(B3_API_URL, data=payload, timeout=60)
-    resp.raise_for_status()
-
-    # Response is ISO-8859-1 encoded XML
-    root = ET.fromstring(resp.content.decode("iso-8859-1"))
+    root = _query_b3(session, payload)
 
     if root.tag == "ERROS":
-        code = root.findtext("NUMERO_DO_ERRO", "")
-        desc = root.findtext("DESCRICAO_DO_ERRO", "")
+        code = root.findtext("NUMERO_DO_ERRO", "").strip()
+        desc = root.findtext("DESCRICAO_DO_ERRO", "").strip()
+        if code == B3_ERR_NO_RECORDS:
+            logger.info("B3 API: no records for %s", date_str)
+            return pd.DataFrame(columns=_EMPTY_COLUMNS)
         exc = RuntimeError(f"B3 API error {code}: {desc}")
-        if desc.strip().upper() in B3_CREDENTIAL_ERRORS:
-            raise CredentialError(desc.strip()) from exc
+        norm = _normalize(desc)
+        if code == B3_ERR_CREDENTIAL or any(e in norm for e in B3_CREDENTIAL_ERRORS):
+            raise CredentialError(desc or f"erro {code}") from exc
+        if code in B3_ERR_BAD_REQUEST:
+            raise B3RequestError(f"B3 API error {code}: {desc}") from exc
         raise exc
 
     rows = []
     for link in root.findall("Link"):
         rows.append({
-            "ccvm":     link.get("ccvm", ""),
-            "DT_ENTREGA": _parse_dataref(link.get("DataRef", "")),
-            "CATEG_DOC":  link.get("Categoria", ""),
-            "TIPO_DOC":   link.get("Tipo", ""),
-            "LINK_DOC":   link.get("url", ""),
-            "ASSUNTO":    link.get("Especie", ""),
-            "Situacao":   link.get("Situacao", ""),
+            "ccvm":      link.get("ccvm", ""),
+            "DT_REF":    _parse_dataref(link.get("DataRef", "")),
+            "CATEG_DOC": link.get("Categoria", ""),
+            "TIPO_DOC":  link.get("Tipo", ""),
+            "LINK_DOC":  link.get("url", ""),
+            "ASSUNTO":   link.get("Especie", ""),
+            "Situacao":  link.get("Situacao", ""),
         })
 
     logger.info("B3 API returned %d IPE records for %s", len(rows), date_str)
 
     if not rows:
-        return pd.DataFrame(columns=["ccvm","CNPJ_CIA","DENOM_CIA","DT_ENTREGA","CATEG_DOC","TIPO_DOC","LINK_DOC","ASSUNTO","_cnpj_digits"])
+        return pd.DataFrame(columns=_EMPTY_COLUMNS)
 
     df = pd.DataFrame(rows)
 
@@ -248,7 +313,7 @@ def _log_skipped(row: pd.Series, reason: str) -> None:
         if write_header:
             writer.writerow(["data", "empresa", "tipo", "motivo"])
         writer.writerow([
-            row.get("DT_ENTREGA", ""),
+            row.get("DT_REF", ""),
             row.get("DENOM_CIA", ""),
             row.get("CATEG_DOC", ""),
             reason,
@@ -258,9 +323,11 @@ def _log_skipped(row: pd.Series, reason: str) -> None:
 # ── Dedup ─────────────────────────────────────────────────────────────────────
 
 def make_hash(row: pd.Series) -> str:
+    # Field values (not names) feed the hash, so the DT_ENTREGA → DT_REF
+    # rename keeps hashes of already-processed documents unchanged.
     raw = "|".join([
         str(row.get("CNPJ_CIA", "")),
-        str(row.get("DT_ENTREGA", "")),
+        str(row.get("DT_REF", "")),
         str(row.get("TIPO_DOC", "")),
         str(row.get("LINK_DOC", "")),
     ])
@@ -441,6 +508,7 @@ def call_llm(doc_type: str, company: str, date_str: str, text: str) -> str | Non
         client = OpenAI(
             api_key=os.environ["DEEPSEEK_API_KEY"],
             base_url="https://api.deepseek.com",
+            timeout=60,
         )
         user_msg = (
             f"Tipo: {doc_type}\n"
@@ -462,10 +530,11 @@ def call_llm(doc_type: str, company: str, date_str: str, text: str) -> str | Non
         return None
 
 
-def send_notification(row: pd.Series, summary: str | None) -> None:
+def send_notification(row: pd.Series, summary: str | None) -> bool:
+    """Send one document alert. Returns True if every recipient received it."""
     doc_type = row.get("CATEG_DOC", "Documento")
     company  = row.get("DENOM_CIA", "")
-    dt       = row.get("DT_ENTREGA", "")
+    dt       = row.get("DT_REF", "")
     link     = row.get("LINK_DOC", "")
     body     = summary if summary else "_Resumo indisponível_"
     msg = (
@@ -474,13 +543,16 @@ def send_notification(row: pd.Series, summary: str | None) -> None:
         f"{body}\n\n"
         f"[PDF]({link})"
     )
-    send_message(msg)
+    return send_message(msg)
 
 
-def send_vlmo_batch_notification(vlmo_by_company: dict) -> None:
-    """Send ONE consolidated VLMO Telegram message for all companies in this run."""
+def send_vlmo_batch_notification(vlmo_by_company: dict) -> bool:
+    """Send ONE consolidated VLMO Telegram message for all companies in this run.
+
+    Returns True if every recipient received it (or there was nothing to send).
+    """
     if not vlmo_by_company:
-        return
+        return True
 
     ref_month = next(iter(vlmo_by_company.values())).get("ref_month", "")
     try:
@@ -524,7 +596,7 @@ def send_vlmo_batch_notification(vlmo_by_company: dict) -> None:
             count_str = f" ({count}x)" if count > 1 else ""
             lines.append(f"  · {pos} · {op} · {_format_amount(total_vol)}{count_str}")
 
-    send_message("\n".join(lines))
+    return send_message("\n".join(lines))
 
 
 # ── Git commit-back ───────────────────────────────────────────────────────────
@@ -549,6 +621,8 @@ def git_commit_back() -> None:
             logger.info("No changes to commit.")
             return
         subprocess.run(["git", "commit", "-m", f"ipe update {now_utc}"], check=True)
+        # The remote may have moved since checkout (manual pushes, other runs).
+        subprocess.run(["git", "pull", "--rebase"], check=True)
         subprocess.run(["git", "push"], check=True)
         logger.info("Committed and pushed: %s", existing)
     except subprocess.CalledProcessError as exc:
@@ -557,6 +631,17 @@ def git_commit_back() -> None:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+def _abort(title: str, exc: Exception, action: str) -> None:
+    """Send a best-effort Telegram alert and exit non-zero."""
+    msg = f"🚨 *CVM-Alerts parou*: {title}\nErro: `{exc}`\nAção: {action}"
+    logger.critical("%s — aborting run: %s", title, exc)
+    try:
+        send_message(msg)
+    except Exception:
+        pass  # best-effort; don't mask the original error
+    sys.exit(1)
+
+
 def main() -> None:
     session      = create_session()
     company_map  = load_company_map()
@@ -564,12 +649,17 @@ def main() -> None:
     processed      = load_processed_ids()
     today          = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
     last_run_date  = load_last_run_date()
-    days_back      = (today - last_run_date).days
-    query_dates    = [last_run_date + timedelta(days=i)
-                      for i in range(1, days_back + 1)] or [today]
-    valid_date_strs = {d.isoformat() for d in query_dates}
+    # Re-query last_run_date itself: a run late in the day (or delayed by the
+    # Actions scheduler past midnight) leaves part of it unseen. Hash dedup
+    # makes the overlap free.
+    start_date     = min(last_run_date, today)
+    query_dates    = [start_date + timedelta(days=i)
+                      for i in range((today - start_date).days + 1)]
     new_records    = []
     vlmo_by_company: dict[str, dict] = {}
+    vlmo_hashes: list[str] = []
+    failed_dates: list[date] = []
+    undelivered = 0
 
     logger.info("Querying %d date(s): %s", len(query_dates),
                 ", ".join(d.isoformat() for d in query_dates))
@@ -580,23 +670,19 @@ def main() -> None:
             frames.append(download_ipe_b3(session, qd))
         except CredentialError as exc:
             # Permanent failure — no point retrying other dates.
-            msg = (
-                f"🚨 *CVM-Alerts parou*: credencial B3 inválida\n"
-                f"Erro: `{exc}`\n"
-                f"Ação: renovar senha em conteudo.cvm.gov.br ou contatar "
-                f"suporteexterno@cvm.gov.br"
-            )
-            logger.critical("Credential error — aborting run: %s", exc)
-            try:
-                send_message(msg)
-            except Exception:
-                pass  # best-effort; don't mask the credential error
-            sys.exit(1)
+            _abort("credencial B3 inválida", exc,
+                   f"{PASSWORD_HELP}. Suporte: suporteexterno@cvm.gov.br")
+        except B3RequestError as exc:
+            _abort("parâmetro rejeitado pela B3", exc,
+                   "corrigir a requisição em ipe\\_watcher.py")
         except Exception as exc:
             logger.error("Failed to query B3 API for %s: %s", qd, exc)
+            failed_dates.append(qd)
 
     if not frames:
-        return
+        _abort("B3 API indisponível", RuntimeError(
+                   f"todas as {len(query_dates)} consulta(s) falharam"),
+               "verificar logs do Actions; a próxima execução repete o período")
 
     df = pd.concat(frames, ignore_index=True)
 
@@ -606,9 +692,12 @@ def main() -> None:
     logger.info("CCVMs cobertura com registros: %s",
                 sorted(set(df["ccvm"]) & watched_ccvm))
 
-    # Filter: watched companies (by ccvm) + relevant categories
+    # Filter: watched companies (by ccvm) + relevant categories.
+    # No date filter: the API already returns only documents whose last action
+    # falls in the queried window, and DT_REF is the document's *reference*
+    # date, which can precede its delivery.
     df = df[df["ccvm"].isin(watched_ccvm)]
-    df = df[df["CATEG_DOC"].isin(ALL_WATCHED_CATEGORIES)]
+    df = df[df["CATEG_DOC"].isin(ALL_WATCHED_CATEGORIES)].copy()
     logger.info("%d rows after category+ccvm filter", len(df))
 
     # Enrich with CNPJ and company name from local map
@@ -616,26 +705,13 @@ def main() -> None:
     df["DENOM_CIA"]    = df["ccvm"].map(lambda c: company_map[c]["denom"])
     df["_cnpj_digits"] = df["ccvm"].map(lambda c: company_map[c]["cnpj_digits"])
 
-    # Guard: keep regular docs within our query window.
-    # VLMO records use the reference month as DT_ENTREGA (e.g. April), not the
-    # filing date, so the date guard would wrongly discard them. Dedup by hash
-    # is sufficient for VLMO idempotency.
-    df_vlmo    = df[df["CATEG_DOC"] == VLMO_CATEGORY]
-    df_regular = df[df["CATEG_DOC"] != VLMO_CATEGORY]
-    df_regular = df_regular[df_regular["DT_ENTREGA"].apply(
-        lambda x: any(x.startswith(d) for d in valid_date_strs) if pd.notna(x) else False
-    )]
-    df = pd.concat([df_vlmo, df_regular], ignore_index=True)
-    logger.info("%d rows in query window (%s) + %d VLMO rows", len(df_regular),
-                ", ".join(sorted(valid_date_strs)), len(df_vlmo))
-
     for _, row in df.iterrows():
         categ = str(row.get("CATEG_DOC", ""))
+        doc_hash = make_hash(row)
+        if doc_hash in processed:
+            continue
 
         if categ == VLMO_CATEGORY:
-            doc_hash = make_hash(row)
-            if doc_hash in processed:
-                continue
             link = str(row.get("LINK_DOC", ""))
             pdf_bytes = None
             if link:
@@ -644,7 +720,7 @@ def main() -> None:
             transactions = parse_vlmo_pdf(pdf_bytes) if pdf_bytes else []
 
             ccvm_key = str(row.get("ccvm", ""))
-            dt_val = str(row.get("DT_ENTREGA", ""))
+            dt_val = str(row.get("DT_REF", ""))
             if ccvm_key not in vlmo_by_company:
                 vlmo_by_company[ccvm_key] = {
                     "ticker":       company_map[ccvm_key]["ticker"],
@@ -657,17 +733,16 @@ def main() -> None:
             if link and (transactions or not vlmo_by_company[ccvm_key]["primary_link"]):
                 vlmo_by_company[ccvm_key]["primary_link"] = link
 
-            processed.add(doc_hash)
+            vlmo_hashes.append(doc_hash)
             new_records.append(row)
             continue
 
         should_process, skip_reason = pre_filter(row)
         if not should_process:
             _log_skipped(row, skip_reason)
-            continue
-
-        doc_hash = make_hash(row)
-        if doc_hash in processed:
+            # Remember skipped docs too, so later runs don't log them again.
+            processed.add(doc_hash)
+            save_processed_ids(processed)
             continue
 
         pdf_bytes = None
@@ -683,25 +758,50 @@ def main() -> None:
                 summary = call_llm(
                     doc_type=str(row.get("CATEG_DOC", "")),
                     company=str(row.get("DENOM_CIA", "")),
-                    date_str=str(row.get("DT_ENTREGA", "")),
+                    date_str=str(row.get("DT_REF", "")),
                     text=text,
                 )
 
-        send_notification(row, summary)
+        if not send_notification(row, summary):
+            # Leave unprocessed so the next run retries delivery.
+            logger.error("Notification not delivered: %s", link)
+            undelivered += 1
+            continue
         processed.add(doc_hash)
+        # Persist after each delivery: a crash later in the run must not
+        # cause already-sent alerts to be sent again.
+        save_processed_ids(processed)
         new_records.append(row)
 
     if vlmo_by_company:
-        send_vlmo_batch_notification(vlmo_by_company)
+        if send_vlmo_batch_notification(vlmo_by_company):
+            processed.update(vlmo_hashes)
+        else:
+            logger.error("VLMO batch notification not delivered")
+            undelivered += 1
 
     save_processed_ids(processed)
-    save_last_run_date(today)
+
+    # Advance only through the last date queried without error; a failed
+    # date (and everything after it) is queried again next run.
+    last_ok = None
+    for qd in query_dates:
+        if qd in failed_dates:
+            break
+        last_ok = qd
+    if last_ok is not None:
+        save_last_run_date(last_ok)
 
     if new_records:
         pd.DataFrame(new_records).to_csv(INDEX_LATEST_FILE, index=False)
 
     git_commit_back()
     logger.info("Done. Processed %d new documents.", len(new_records))
+
+    if failed_dates or undelivered:
+        logger.error("Run incomplete: %d failed date(s) %s, %d undelivered notification(s)",
+                     len(failed_dates), [d.isoformat() for d in failed_dates], undelivered)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

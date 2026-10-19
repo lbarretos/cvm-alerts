@@ -104,7 +104,11 @@ Três erros B3 causam **workflow vermelho ❌ + alerta Telegram** imediatos:
 | `LOGIN INCORRETO` | Senha errada no Secret | Corrigir `CVM_PASSWORD` no Secret |
 | `USUÁRIO SUSPENSO` | Conta bloqueada após muitas tentativas | Contatar suporte para desbloquear |
 
-**Para renovar senha ou desbloquear conta:**
+**Para trocar a senha** (Nota Técnica do Download Múltiplo, §5):
+- Opção 1: [cas.bovespa.com.br/cas](https://cas.bovespa.com.br/cas/) → login → menu **Senhas** → senha atual + nova → **Alterar**
+- Opção 2: [rad.cvm.gov.br/ENET](https://www.rad.cvm.gov.br/ENET) → login → ícone do triângulo verde → **Alteração de senha**
+
+**Para desbloquear conta suspensa:**
 - E-mail: `suporteexterno@cvm.gov.br`
 - Telefone: `0800-944-3535`
 
