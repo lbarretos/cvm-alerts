@@ -41,7 +41,7 @@ Telegram (um bloco por empresa) + reports/latest_report.html
 | `_query_b3()` | POST com retry (rede, resposta não-XML, erro 22013); nunca repete erro de credencial |
 | `load_company_map()` | ccvm → ticker/CNPJ/nome a partir de `config/cnpj_map.yaml` |
 | `pre_filter()` | Regras de descarte para Avisos/Comunicados aos Acionistas; palavras-chave que forçam envio |
-| `make_hash()` | SHA256 de CNPJ\|DT_REF\|TIPO\|LINK (dedup) |
+| `make_hash()` | Dedup: SHA256 de `num_seq_docm`\|`num_vers_docm` (mesmo documento com URL nova = duplicado; versão nova = alerta marcado "reapresentação"). Sem esses atributos, usa `legacy_hash()` (CNPJ\|DT_REF\|TIPO\|LINK), que também é checado para IDs gravados antes de 2026-10 |
 | `download_pdf()` / `extract_text()` | PDF → texto (até `LLM_TEXT_CHARS`) |
 | `call_llm()` | Deepseek (`deepseek-chat`, timeout 60 s) com `config/system_prompt_ipe.txt` |
 | `send_notification()` | Mensagem do documento; retorna se foi entregue |
@@ -126,11 +126,12 @@ Data: <DT_REF>
 <?xml version="1.0" encoding="ISO-8859-1" ?>
 <DownloadMultiplo DataSolicitada="dd/mm/aaaa hh:mm" TipoDocumento="IPE" DataConsulta="dd/mm/aaaa hh:mm">
   <Link url="..." Documento="IPE" ccvm="24392" DataRef="23/04/2026 09:00:00"
-        FrmDtRef="..." Categoria="Fato Relevante" Tipo="..." Especie="..." Situacao="Liberado" />
+        FrmDtRef="..." Categoria="Fato Relevante" Tipo="..." Especie="..." Situacao="Liberado"
+        num_seq_docm="..." num_vers_docm="1" />
 </DownloadMultiplo>
 ```
 
-O manual não documenta em qual atributo vem o assunto com `txtAssuntoIPE=SIM`; o log `B3 Link attributes` mostra o que a API envia.
+Observado em 2026-10 (log `B3 Link attributes`): `txtAssuntoIPE=SIM` não acrescenta atributo de assunto — o assunto é `Especie`. A API envia dois atributos fora do manual: `num_seq_docm` (número do documento) e `num_vers_docm` (versão), usados no dedup.
 
 ### DataFrame do watcher
 
@@ -142,6 +143,7 @@ O manual não documenta em qual atributo vem o assunto com `txtAssuntoIPE=SIM`; 
 | TIPO_DOC | `@Tipo` |
 | LINK_DOC | `@url` |
 | ASSUNTO | `@Especie` |
+| SEQ_DOC / VERS_DOC | `@num_seq_docm` / `@num_vers_docm` |
 | CNPJ_CIA / DENOM_CIA / _cnpj_digits | `config/cnpj_map.yaml` pelo ccvm |
 
 ## Testes
@@ -224,5 +226,4 @@ O GitHub desativa workflows agendados em alguns casos (ex.: inatividade do repos
 ## Próximos Passos (Ideias)
 
 - [ ] Resumo diário para Comunicados ao Mercado (Fato Relevante continua imediato)
-- [ ] Dedup de documento reapresentado (mesma espécie e data de referência, URL nova)
 - [ ] Webhook HTTP / e-mail além do Telegram
