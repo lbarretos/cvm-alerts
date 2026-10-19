@@ -165,7 +165,8 @@ def _normalize(text: str) -> str:
     return "".join(c for c in nfkd if not unicodedata.combining(c)).strip().upper()
 
 
-_EMPTY_COLUMNS = ["ccvm", "DT_REF", "CATEG_DOC", "TIPO_DOC", "LINK_DOC", "ASSUNTO", "Situacao"]
+_EMPTY_COLUMNS = ["ccvm", "DT_REF", "CATEG_DOC", "TIPO_DOC", "LINK_DOC", "ASSUNTO", "Situacao",
+                  "SEQ_DOC", "VERS_DOC"]
 
 
 def _query_b3(session, payload: dict) -> ET.Element:
@@ -252,6 +253,10 @@ def download_ipe_b3(session, query_date: date) -> pd.DataFrame:
             "LINK_DOC":  link.get("url", ""),
             "ASSUNTO":   link.get("Especie", ""),
             "Situacao":  link.get("Situacao", ""),
+            # Not in the technical note, but sent by the API: document number
+            # and version, stable across re-deliveries and new URLs.
+            "SEQ_DOC":   link.get("num_seq_docm", ""),
+            "VERS_DOC":  link.get("num_vers_docm", ""),
         })
 
     logger.info("B3 API returned %d IPE records for %s", len(rows), date_str)
@@ -339,9 +344,27 @@ def _log_skipped(row: pd.Series, reason: str) -> None:
 
 # ── Dedup ─────────────────────────────────────────────────────────────────────
 
+def _present(value) -> str:
+    """str(value), or "" for missing/NaN."""
+    return "" if value is None or pd.isna(value) else str(value).strip()
+
+
 def make_hash(row: pd.Series) -> str:
-    # Field values (not names) feed the hash, so the DT_ENTREGA → DT_REF
-    # rename keeps hashes of already-processed documents unchanged.
+    """Dedup key: B3 document number + version when available.
+
+    The same document re-listed (new action date, new URL) keeps its key;
+    a new version (reapresentação) gets a new one and is alerted again.
+    """
+    seq = _present(row.get("SEQ_DOC"))
+    if seq:
+        raw = f"doc|{seq}|{_present(row.get('VERS_DOC'))}"
+        return hashlib.sha256(raw.encode()).hexdigest()
+    return legacy_hash(row)
+
+
+def legacy_hash(row: pd.Series) -> str:
+    """Pre-2026-10 key (CNPJ|DT_REF|TIPO|LINK). Still checked so documents
+    processed before the switch to make_hash's document key aren't re-sent."""
     raw = "|".join([
         str(row.get("CNPJ_CIA", "")),
         str(row.get("DT_REF", "")),
@@ -546,8 +569,12 @@ def send_notification(row: pd.Series, summary: str | None) -> bool:
     dt       = row.get("DT_REF", "")
     link     = row.get("LINK_DOC", "")
     body     = summary if summary else "_Resumo indisponível_"
+    version  = _present(row.get("VERS_DOC"))
+    title    = f"*{doc_type} — {company}*"
+    if version.isdigit() and int(version) > 1:
+        title += f" (reapresentação, versão {version})"
     msg = (
-        f"*{doc_type} — {company}*\n"
+        f"{title}\n"
         f"{dt}\n\n"
         f"{body}\n\n"
         f"[PDF]({link})"
@@ -697,7 +724,7 @@ def main() -> None:
     for _, row in df.iterrows():
         categ = str(row.get("CATEG_DOC", ""))
         doc_hash = make_hash(row)
-        if doc_hash in processed:
+        if doc_hash in processed or legacy_hash(row) in processed:
             continue
 
         if categ == VLMO_CATEGORY:

@@ -13,7 +13,8 @@ SAMPLE_B3_XML = b"""<?xml version="1.0" encoding="ISO-8859-1" ?>
         Documento="IPE" ccvm="24392"
         DataRef="22/04/2026 09:00:00" FrmDtRef="22/04/2026 09:00"
         Categoria="Fato Relevante" Tipo="Fato Relevante"
-        Especie="Acordo operacional" Situacao="Liberado" />
+        Especie="Acordo operacional" Situacao="Liberado"
+        num_seq_docm="1001" num_vers_docm="1" />
   <Link url="http://example.com/doc2.pdf"
         Documento="IPE" ccvm="99999"
         DataRef="22/04/2026 09:00:00" FrmDtRef="22/04/2026 09:00"
@@ -1176,3 +1177,58 @@ def test_abort_marks_alert_sent_only_when_delivered(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         ipe_watcher._abort("x", RuntimeError("y"), "z")
     assert marker.exists()
+
+
+# ── Dedup by B3 document number + version ────────────────────────────────────
+
+def _doc_row(link="http://x/a.pdf", seq="1001", vers="1"):
+    return pd.Series({"CNPJ_CIA": "X", "DT_REF": "2026-10-19", "TIPO_DOC": "Fato Relevante",
+                      "LINK_DOC": link, "SEQ_DOC": seq, "VERS_DOC": vers})
+
+
+def test_download_ipe_b3_reads_document_number_and_version(b3_env):
+    df = ipe_watcher.download_ipe_b3(_b3_session(SAMPLE_B3_XML), date(2026, 4, 22))
+    assert df.iloc[0]["SEQ_DOC"] == "1001"
+    assert df.iloc[0]["VERS_DOC"] == "1"
+    assert df.iloc[1]["SEQ_DOC"] == ""   # attribute absent → legacy key
+
+
+def test_same_document_new_url_is_a_duplicate():
+    assert ipe_watcher.make_hash(_doc_row(link="http://x/a.pdf")) == \
+        ipe_watcher.make_hash(_doc_row(link="http://x/b.pdf"))
+
+
+def test_new_version_is_not_a_duplicate():
+    assert ipe_watcher.make_hash(_doc_row(vers="1")) != ipe_watcher.make_hash(_doc_row(vers="2"))
+
+
+def test_without_document_number_falls_back_to_legacy_key():
+    row = _doc_row(seq="")
+    assert ipe_watcher.make_hash(row) == ipe_watcher.legacy_hash(row)
+
+
+def test_main_skips_documents_processed_under_legacy_key(main_env, monkeypatch):
+    """IDs saved before the switch are legacy hashes: the same document must
+    not be re-sent once it arrives with num_seq_docm."""
+    today = date(2026, 4, 21)
+    main_env.write_text(today.isoformat())
+    df = _doc_df("2026-04-21").assign(SEQ_DOC="1001", VERS_DOC="1")
+    legacy = ipe_watcher.legacy_hash(pd.Series({
+        "CNPJ_CIA": "05.197.443/0001-38", "DT_REF": "2026-04-21",
+        "TIPO_DOC": "Fato Relevante", "LINK_DOC": "http://example.com/doc.pdf"}))
+    ipe_watcher.save_processed_ids({legacy})
+    monkeypatch.setattr(ipe_watcher, "download_ipe_b3", lambda _s, _d: df)
+    sent = []
+    monkeypatch.setattr(ipe_watcher, "send_notification", lambda row, _s: sent.append(row) or True)
+
+    _run_main(today)
+
+    assert sent == []
+
+
+def test_new_version_is_labelled_in_the_alert():
+    row = _doc_row(vers="2").copy()
+    row["CATEG_DOC"], row["DENOM_CIA"] = "Fato Relevante", "CO"
+    with patch("ipe_watcher.send_message", return_value=True) as send:
+        ipe_watcher.send_notification(row, "- Fato: X")
+    assert "(reapresentação, versão 2)" in send.call_args[0][0]
