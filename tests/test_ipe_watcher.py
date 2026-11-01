@@ -1118,6 +1118,28 @@ def test_send_message_returns_false_when_delivery_fails(monkeypatch):
         assert telegram_notifier.send_message("hi") is False
 
 
+def test_send_retries_after_timeout():
+    import requests
+    import telegram_notifier
+    ok = MagicMock(status_code=200, ok=True)
+    with patch("telegram_notifier.requests.post",
+               side_effect=[requests.ReadTimeout("slow"), ok]) as post, \
+         patch("telegram_notifier.time.sleep") as sleep:
+        assert telegram_notifier._send("t", "c", "hi") is True
+    assert post.call_count == 2
+    sleep.assert_called_once_with(telegram_notifier.NETWORK_BACKOFF[0])
+
+
+def test_send_gives_up_after_repeated_timeouts():
+    import requests
+    import telegram_notifier
+    with patch("telegram_notifier.requests.post",
+               side_effect=requests.ConnectTimeout("down")) as post, \
+         patch("telegram_notifier.time.sleep"):
+        assert telegram_notifier._send("t", "c", "hi") is False
+    assert post.call_count == len(telegram_notifier.NETWORK_BACKOFF) + 1
+
+
 def test_vlmo_batch_month_label_in_portuguese():
     data = {"24392": {"ticker": "HAPV3", "denom": "HAPVIDA", "ref_month": "2026-03",
                       "transactions": [], "primary_link": ""}}
@@ -1155,13 +1177,16 @@ def test_download_logs_link_attribute_names(b3_env, caplog):
 
 # ── State persistence ────────────────────────────────────────────────────────
 
-def test_load_processed_ids_merges_legacy_cache_copy(tmp_path, monkeypatch):
-    git_copy, cache_copy = tmp_path / "ids.json", tmp_path / "ids.cache.json"
+def test_load_processed_ids_reads_git_copy(tmp_path, monkeypatch):
+    git_copy = tmp_path / "ids.json"
     git_copy.write_text('["a", "b"]')
-    cache_copy.write_text('["b", "c"]')
     monkeypatch.setattr(ipe_watcher, "PROCESSED_IDS_FILE", git_copy)
-    monkeypatch.setattr(ipe_watcher, "LEGACY_CACHE_IDS_FILE", cache_copy)
-    assert ipe_watcher.load_processed_ids() == {"a", "b", "c"}
+    assert ipe_watcher.load_processed_ids() == {"a", "b"}
+
+
+def test_load_processed_ids_missing_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(ipe_watcher, "PROCESSED_IDS_FILE", tmp_path / "none.json")
+    assert ipe_watcher.load_processed_ids() == set()
 
 
 def test_abort_marks_alert_sent_only_when_delivered(tmp_path, monkeypatch):

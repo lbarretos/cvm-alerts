@@ -4,7 +4,7 @@
 
 **cvm-alerts** manda alertas no Telegram para as empresas da cobertura (`config/cnpj_map.yaml`):
 
-1. **Documentos IPE** (Fato Relevante, Comunicados, Avisos) com resumo por LLM — `ipe_watcher.py`, a cada 3 h (09h–21h BRT).
+1. **Documentos IPE** (Fato Relevante, Comunicados, Avisos) com resumo por LLM — `ipe_watcher.py`, de hora em hora (09h–21h BRT).
 2. **Negociações de insiders (VLMO)** — aviso diário (PDF via B3, em `ipe_watcher.py`) e resumo semanal de destaques P1/P2 (CSV de dados abertos da CVM, em `br_stock_trading.py`).
 
 ### Fluxo do watcher (`ipe_watcher.py`)
@@ -116,7 +116,7 @@ Data: <DT_REF>
 
 ### 5. Horários
 
-`.github/workflows/ipe_watcher.yml` e `vlmo_weekly.yml` (cron em UTC; BRT = UTC−3). Use minuto quebrado: o agendador do GitHub atrasa mais as execuções em hora cheia, às vezes horas. Atraso não causa perda: o watcher reconsulta desde `ipe_last_run_date.txt` (inclusive).
+`.github/workflows/ipe_watcher.yml` e `vlmo_weekly.yml` (cron em UTC; BRT = UTC−3). Use minuto quebrado: o agendador do GitHub atrasa mais as execuções em hora cheia, às vezes horas. Atraso não causa perda: o watcher reconsulta desde `ipe_last_run_date.txt` (inclusive). O GitHub descarta/atrasa execuções agendadas (medido em 2026-10: 2–4 de 5 execuções de um cron de 3 h, lacunas de até 13 h), por isso o cron é de hora em hora: execução extra é idempotente (~40 s).
 
 ## Estrutura de Dados
 
@@ -160,13 +160,13 @@ Exemplo de resposta da B3: `SAMPLE_B3_XML` em `tests/test_ipe_watcher.py`. O wor
 
 | Workflow | Arquivo | Quando | Faz |
 |---|---|---|---|
-| B3 IPE & VLMO Monitor | `ipe_watcher.yml` | a cada 3 h, 09h–21h BRT, seg–sex | roda o watcher; commita o estado (mesmo se falhar) |
+| B3 IPE & VLMO Monitor | `ipe_watcher.yml` | de hora em hora, 09h–21h BRT, seg–sex | roda o watcher; commita o estado (mesmo se falhar) |
 | CVM Weekly VLMO Pipeline | `vlmo_weekly.yml` | segunda 09h07 BRT | resumo semanal; artifact `vlmo-consolidated` (90 dias); commita estado e relatório |
 | Tests | `tests.yml` | PR, push na `main`, segunda (auditoria) | pytest; `pip-audit`; busca de credenciais no código |
 
 Os dois primeiros mandam aviso no Telegram quando falham. O watcher grava `.alert_sent` quando já alertou ele mesmo (credencial, B3 fora do ar), e o aviso genérico não se repete.
 
-`ipe_watcher.yml` ainda restaura o cache antigo de IDs processados (antes de 2026-10 o dedup vivia só no cache do Actions) e o mescla com a cópia do git. Esses dois passos podem sair depois de algumas semanas.
+O dedup vive só no git (`datasets/ipe_processed_ids.json`); o cache legado do Actions foi removido do workflow e do código.
 
 ### Secrets
 

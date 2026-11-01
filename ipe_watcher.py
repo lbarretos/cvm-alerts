@@ -50,10 +50,6 @@ class B3RequestError(Exception):
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 PROCESSED_IDS_FILE  = Path("datasets/ipe_processed_ids.json")
-# Until 2026-10 the processed IDs lived only in the Actions cache. The workflow
-# restores the last cache here so its IDs are merged once into the git copy;
-# the cache expires on its own a week after it stops being written.
-LEGACY_CACHE_IDS_FILE = Path("datasets/ipe_processed_ids.cache.json")
 # Written when this script already sent a Telegram alert about its own
 # failure, so the workflow's generic failure alert doesn't repeat it.
 ALERT_SENT_MARKER  = Path(".alert_sent")
@@ -376,10 +372,9 @@ def legacy_hash(row: pd.Series) -> str:
 
 def load_processed_ids() -> set[str]:
     ids: set[str] = set()
-    for path in (PROCESSED_IDS_FILE, LEGACY_CACHE_IDS_FILE):
-        if path.exists():
-            with open(path, encoding="utf-8") as f:
-                ids |= set(json.load(f))
+    if PROCESSED_IDS_FILE.exists():
+        with open(PROCESSED_IDS_FILE, encoding="utf-8") as f:
+            ids |= set(json.load(f))
     return ids
 
 

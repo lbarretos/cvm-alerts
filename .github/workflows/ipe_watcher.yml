@@ -2,9 +2,13 @@ name: B3 IPE & VLMO Monitor
 
 on:
   schedule:
-    # Every 3 h, 09h–18h BRT (12–21 UTC), Mon–Fri. Minute 17 avoids the
+    # Hourly, 09h–20h BRT (12–23 UTC), Mon–Fri. GitHub drops or delays
+    # scheduled runs under load (observed 2026-10: 2–4 of the 5 runs of a
+    # 3-hourly cron actually ran, gaps up to 13 h), so the cron is denser than
+    # the freshness needed. Reruns are cheap (~40 s) and idempotent: dedup and
+    # ipe_last_run_date make an extra run a no-op. Minute 17 avoids the
     # top-of-the-hour queue, where scheduled runs get delayed the most.
-    - cron: '17 12,15,18,21 * * 1-5'
+    - cron: '17 12-23 * * 1-5'
     # 21h BRT falls on the next UTC day (00 UTC, Tue–Sat).
     - cron: '17 0 * * 2-6'
   workflow_dispatch:
@@ -28,24 +32,6 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0   # full history so pull --rebase / push work
-
-      # Migration: until 2026-10 the processed IDs lived only in the Actions
-      # cache. Restore the last copy beside the git one; ipe_watcher.py merges
-      # both. Remove these two steps once a few weeks of runs have committed
-      # the merged file.
-      - name: Restore legacy processed IDs cache
-        uses: actions/cache/restore@v5
-        with:
-          path: datasets/ipe_processed_ids.json
-          key: ipe-processed-ids-legacy
-          restore-keys: ipe-processed-ids-
-
-      - name: Keep legacy cache beside the git copy
-        run: |
-          if ! git diff --quiet -- datasets/ipe_processed_ids.json; then
-            mv datasets/ipe_processed_ids.json datasets/ipe_processed_ids.cache.json
-            git checkout -- datasets/ipe_processed_ids.json
-          fi
 
       - name: Set up Python
         uses: actions/setup-python@v6
