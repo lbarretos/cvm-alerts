@@ -2,13 +2,12 @@ name: B3 IPE & VLMO Monitor
 
 on:
   schedule:
-    # Hourly, 09h–20h BRT (12–23 UTC), Mon–Fri. GitHub drops or delays
-    # scheduled runs under load (observed 2026-10: 2–4 of the 5 runs of a
-    # 3-hourly cron actually ran, gaps up to 13 h), so the cron is denser than
-    # the freshness needed. Reruns are cheap (~40 s) and idempotent: dedup and
-    # ipe_last_run_date make an extra run a no-op. Minute 17 avoids the
+    # Every 3 h, 09h–18h BRT (12–21 UTC), Mon–Fri. Minute 17 avoids the
     # top-of-the-hour queue, where scheduled runs get delayed the most.
-    - cron: '17 12-23 * * 1-5'
+    # GitHub drops/delays scheduled runs (observed 2026-10: 2–4 of 5 ran, gaps
+    # up to 13 h); a late run loses nothing, because ipe_last_run_date makes
+    # the next one catch up.
+    - cron: '17 12,15,18,21 * * 1-5'
     # 21h BRT falls on the next UTC day (00 UTC, Tue–Sat).
     - cron: '17 0 * * 2-6'
   workflow_dispatch:
