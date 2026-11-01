@@ -116,7 +116,7 @@ Data: <DT_REF>
 
 ### 5. Horários
 
-`.github/workflows/ipe_watcher.yml` e `vlmo_weekly.yml` (cron em UTC; BRT = UTC−3). Use minuto quebrado: o agendador do GitHub atrasa mais as execuções em hora cheia, às vezes horas. Atraso não causa perda: o watcher reconsulta desde `ipe_last_run_date.txt` (inclusive).
+`.github/workflows/ipe_watcher.yml` e `vlmo_weekly.yml` (cron em UTC; BRT = UTC−3). Use minuto quebrado: o agendador do GitHub atrasa mais as execuções em hora cheia, às vezes horas. Atraso não causa perda: o watcher reconsulta desde `ipe_last_run_date.txt` (inclusive). O GitHub descarta/atrasa execuções agendadas (medido em 2026-10: 2–4 de 5 execuções, lacunas de até 13 h); um documento pode chegar horas depois, mas não se perde. Se a latência incomodar, aumente a frequência do cron: execução extra é idempotente (~40 s).
 
 ## Estrutura de Dados
 
@@ -166,7 +166,7 @@ Exemplo de resposta da B3: `SAMPLE_B3_XML` em `tests/test_ipe_watcher.py`. O wor
 
 Os dois primeiros mandam aviso no Telegram quando falham. O watcher grava `.alert_sent` quando já alertou ele mesmo (credencial, B3 fora do ar), e o aviso genérico não se repete.
 
-`ipe_watcher.yml` ainda restaura o cache antigo de IDs processados (antes de 2026-10 o dedup vivia só no cache do Actions) e o mescla com a cópia do git. Esses dois passos podem sair depois de algumas semanas.
+O dedup vive só no git (`datasets/ipe_processed_ids.json`); o cache legado do Actions foi removido do workflow e do código.
 
 ### Secrets
 

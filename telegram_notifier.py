@@ -10,6 +10,8 @@ TELEGRAM_API = 'https://api.telegram.org/bot{token}/sendMessage'
 MSG_LIMIT = 3800   # hard limit is 4096; keep margin for headers
 SEND_INTERVAL = 1.5      # seconds between messages to one chat (limit ~20/min in groups)
 MAX_RETRY_AFTER = 120    # cap on a single 429 back-off
+REQUEST_TIMEOUT = (5, 30)        # (connect, read) seconds; 10 s read timed out in 2026-10
+NETWORK_BACKOFF = (2, 5)         # waits before the 2nd and 3rd attempt on timeout/connection error
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +54,28 @@ def _get_credentials() -> tuple[str, str]:
     return os.environ['TELEGRAM_BOT_TOKEN'], os.environ['TELEGRAM_CHAT_ID']
 
 
+def _request(url: str, payload: dict) -> requests.Response:
+    """POST, retrying on timeout/connection error (one try plus len(NETWORK_BACKOFF) retries).
+
+    A read timeout can mean Telegram delivered the message and only the reply
+    was lost, so a retry may duplicate it. A duplicate alert is preferred to a
+    missing one.
+    """
+    for attempt in range(len(NETWORK_BACKOFF) + 1):
+        try:
+            return requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            if attempt == len(NETWORK_BACKOFF):
+                raise
+            wait = NETWORK_BACKOFF[attempt]
+            logger.warning(f"Telegram request failed ({exc}); retrying in {wait}s")
+            time.sleep(wait)
+    raise AssertionError("unreachable")
+
+
 def _post(url: str, payload: dict) -> requests.Response:
-    """POST once; on HTTP 429 wait the advertised retry_after and retry once."""
-    resp = requests.post(url, json=payload, timeout=10)
+    """POST; on HTTP 429 wait the advertised retry_after and retry once."""
+    resp = _request(url, payload)
     if resp.status_code == 429:
         try:
             wait = int(resp.json().get('parameters', {}).get('retry_after', 5))
@@ -63,7 +84,7 @@ def _post(url: str, payload: dict) -> requests.Response:
         wait = min(wait, MAX_RETRY_AFTER)
         logger.warning(f"Telegram rate limit, waiting {wait}s")
         time.sleep(wait)
-        resp = requests.post(url, json=payload, timeout=10)
+        resp = _request(url, payload)
     return resp
 
 
