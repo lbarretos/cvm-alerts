@@ -1,0 +1,672 @@
+
+        <!DOCTYPE html>
+        <html lang="pt-BR">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>CVM358 Data Extraction Report</title>
+            <style>
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                    line-height: 1.6;
+                    margin: 0;
+                    padding: 20px;
+                    background-color: #f5f5f5;
+                }
+                .container {
+                    max-width: 1200px;
+                    margin: 0 auto;
+                    background-color: white;
+                    padding: 30px;
+                    border-radius: 10px;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                }
+                .header {
+                    text-align: center;
+                    margin-bottom: 30px;
+                    padding-bottom: 20px;
+                    border-bottom: 2px solid #eee;
+                }
+                .header h1 {
+                    color: #2c3e50;
+                    margin: 0;
+                    font-size: 2.5em;
+                }
+                .section {
+                    margin-bottom: 30px;
+                    padding: 20px;
+                    background-color: #f8f9fa;
+                    border-radius: 8px;
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+                }
+                .section h2 {
+                    color: #2c3e50;
+                    margin-top: 0;
+                    font-size: 1.5em;
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                }
+                .metric {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 10px 0;
+                    border-bottom: 1px solid #eee;
+                }
+                .metric:last-child {
+                    border-bottom: none;
+                }
+                .metric-label {
+                    color: #666;
+                    font-size: 1.1em;
+                }
+                .metric-value {
+                    font-weight: bold;
+                    color: #2c3e50;
+                }
+                .highlight {
+                    color: #3498db;
+                    font-weight: bold;
+                }
+                .footer {
+                    text-align: center;
+                    margin-top: 40px;
+                    padding-top: 20px;
+                    border-top: 2px solid #eee;
+                    color: #666;
+                }
+                .companies-list {
+                    max-height: 400px;
+                    overflow-y: auto;
+                    margin-top: 15px;
+                }
+                .company-item {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 10px;
+                    border-bottom: 1px solid #eee;
+                    background-color: white;
+                }
+                .company-item:last-child {
+                    border-bottom: none;
+                }
+                .company-name {
+                    font-weight: 500;
+                    color: #2c3e50;
+                }
+                .company-cnpj {
+                    color: #666;
+                    font-size: 0.9em;
+                }
+                .table-container {
+                    overflow-x: auto;
+                    margin-top: 15px;
+                }
+                .agribusiness-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    font-size: 0.9em;
+                }
+                .agribusiness-table th, .agribusiness-table td {
+                    padding: 10px;
+                    text-align: left;
+                    border-bottom: 1px solid #eee;
+                }
+                .agribusiness-table th {
+                    background-color: #f1f1f1;
+                    font-weight: 600;
+                }
+                .agribusiness-table tr:hover {
+                    background-color: #f9f9f9;
+                }
+                .positive {
+                    color: #27ae60;
+                }
+                .negative {
+                    color: #e74c3c;
+                }
+                @media (max-width: 768px) {
+                    .container {
+                        padding: 15px;
+                    }
+                    .section {
+                        padding: 15px;
+                    }
+                    .company-item {
+                        flex-direction: column;
+                        align-items: flex-start;
+                        gap: 5px;
+                    }
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>📊 CVM358 Data Extraction Report</h1>
+                </div>
+                
+                <div class="section">
+                    <h2>🕒 Run Information</h2>
+                    <div class="metric">
+                        <span class="metric-label">Run Time</span>
+                        <span class="metric-value">2026-11-09 22:15:08</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Latest Data Available</span>
+                        <span class="metric-value">2026-10</span>
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <h2>📈 Total Records</h2>
+                    <div class="metric">
+                        <span class="metric-label">Consolidated</span>
+                        <span class="metric-value highlight">398,134</span>
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <h2>✨ New Records Since Last Run</h2>
+                    <div class="metric">
+                        <span class="metric-label">Consolidated</span>
+                        <span class="metric-value highlight">624</span>
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <h2>🏢 Unique Companies</h2>
+                    <div class="metric">
+                        <span class="metric-label">Consolidated</span>
+                        <span class="metric-value highlight">766</span>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h2>📋 Companies Reported in 2026-10</h2>
+                    <div class="companies-list">
+                        
+                <div class="company-item">
+                    <span class="company-name">AFLUENTE TRANSMISSÃO DE ENERGIA ELETRICA S/A</span>
+                    <span class="company-cnpj">CNPJ: 10.338.320/0001-00</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">AGROGALAXY PARTICIPAÇÕES S.A. - EM RECUPERAÇÃO JUDICIAL</span>
+                    <span class="company-cnpj">CNPJ: 21.240.146/0001-84</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">ALFA HOLDINGS S.A.</span>
+                    <span class="company-cnpj">CNPJ: 17.167.396/0001-69</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">ALLIANÇA SAÚDE E PARTICIPAÇÕES S.A.</span>
+                    <span class="company-cnpj">CNPJ: 42.771.949/0001-35</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">ALLOS S.A.</span>
+                    <span class="company-cnpj">CNPJ: 05.878.397/0001-32</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">AMPLA ENERGIA E SERVIÇOS S.A.</span>
+                    <span class="company-cnpj">CNPJ: 33.050.071/0001-58</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">BANCO DA AMAZÔNIA S.A.</span>
+                    <span class="company-cnpj">CNPJ: 04.902.979/0001-44</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">BANCO DO ESTADO DE SERGIPE SA</span>
+                    <span class="company-cnpj">CNPJ: 13.009.717/0001-46</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">BANCO DO ESTADO DO RIO GRANDE DO SUL SA</span>
+                    <span class="company-cnpj">CNPJ: 92.702.067/0001-96</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">BANESTES SA BANCO DO ESTADO DO ESPIRITO SANTO</span>
+                    <span class="company-cnpj">CNPJ: 28.127.603/0001-78</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">BBM LOGÍSTICA S.A.</span>
+                    <span class="company-cnpj">CNPJ: 01.107.327/0001-20</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">BEMOBI MOBILE TECH S.A.</span>
+                    <span class="company-cnpj">CNPJ: 09.042.817/0001-05</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">BLAU FARMACÊUTICA S.A.</span>
+                    <span class="company-cnpj">CNPJ: 58.430.828/0001-60</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">BOMBRIL S.A. - EM RECUPERAÇÃO JUDICIAL</span>
+                    <span class="company-cnpj">CNPJ: 50.564.053/0001-03</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">BRADSAÚDE S.A.</span>
+                    <span class="company-cnpj">CNPJ: 58.119.199/0001-51</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">BRQ SOLUÇÕES EM INFORMÁTICA S.A.</span>
+                    <span class="company-cnpj">CNPJ: 36.542.025/0001-64</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">CAIXA SEGURIDADE PARTICIPAÇÕES S.A.</span>
+                    <span class="company-cnpj">CNPJ: 22.543.331/0001-00</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">CAMBUCI SA</span>
+                    <span class="company-cnpj">CNPJ: 61.088.894/0001-08</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">CENTRAIS ELETRICAS DE SANTA CATARINA S.A</span>
+                    <span class="company-cnpj">CNPJ: 83.878.892/0001-55</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">CERRADINHO BIOENERGIA S.A.</span>
+                    <span class="company-cnpj">CNPJ: 08.322.396/0001-03</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">CIA CAT. DE ÁGUAS E SANEAMENTO - CASAN</span>
+                    <span class="company-cnpj">CNPJ: 82.508.433/0001-17</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">CIA DE ELETRICIDADE DO ESTADO DA BAHIA - COELBA</span>
+                    <span class="company-cnpj">CNPJ: 15.139.629/0001-94</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">CIA ENERG CEARA - COELCE</span>
+                    <span class="company-cnpj">CNPJ: 07.047.251/0001-70</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">CIA ENERG MINAS GERAIS - CEMIG</span>
+                    <span class="company-cnpj">CNPJ: 17.155.730/0001-64</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">CIA FERRO LIGAS BAHIA FERBASA</span>
+                    <span class="company-cnpj">CNPJ: 15.141.799/0001-03</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">CIA. DE SANEAMENTO DO PARANÁ - SANEPAR</span>
+                    <span class="company-cnpj">CNPJ: 76.484.013/0001-45</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">CLI SUL S.A.</span>
+                    <span class="company-cnpj">CNPJ: 43.514.079/0001-81</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">COMPANHIA DE FIACAO E TECIDOS CEDRO E CACHOEIRA</span>
+                    <span class="company-cnpj">CNPJ: 17.245.234/0001-00</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">COMPANHIA DO METROPOLITANO DE SÃO PAULO - METRÔ</span>
+                    <span class="company-cnpj">CNPJ: 62.070.362/0001-06</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">COMPANHIA ENERGÉTICA DE BRASÍLIA - CEB</span>
+                    <span class="company-cnpj">CNPJ: 00.070.698/0001-11</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">COMPANHIA ENERGÉTICA SINOP S.A.</span>
+                    <span class="company-cnpj">CNPJ: 19.527.586/0001-75</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">CONSERVAS ODERICH SA</span>
+                    <span class="company-cnpj">CNPJ: 97.191.902/0001-94</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">CORREDOR LOGÍSTICA E INFRAESTRUTURA S.A.</span>
+                    <span class="company-cnpj">CNPJ: 15.114.494/0001-02</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">CPX DISTRIBUIDORA S.A.</span>
+                    <span class="company-cnpj">CNPJ: 10.158.356/0001-01</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">CTC - CENTRO DE TECNOLOGIA CANAVIEIRA S.A.</span>
+                    <span class="company-cnpj">CNPJ: 06.981.381/0001-13</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">D1000 VAREJO FARMA PARTICIPAÇÕES S.A.</span>
+                    <span class="company-cnpj">CNPJ: 12.108.897/0001-50</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">ELECTRO AÇO ALTONA S/A</span>
+                    <span class="company-cnpj">CNPJ: 82.643.537/0001-34</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">ELEKTRO REDES S.A.</span>
+                    <span class="company-cnpj">CNPJ: 02.328.280/0001-97</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">ELETROPAULO METROP. ELET. SAO PAULO S.A.</span>
+                    <span class="company-cnpj">CNPJ: 61.695.227/0001-93</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">EMCCAMP RESIDENCIAL S.A.</span>
+                    <span class="company-cnpj">CNPJ: 19.403.252/0001-90</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">EUCATEX S.A. INDUSTRIA E COMERCIO</span>
+                    <span class="company-cnpj">CNPJ: 56.643.018/0001-66</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">GRENDENE SA</span>
+                    <span class="company-cnpj">CNPJ: 89.850.341/0001-60</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">GRUPO MULTILASER S.A.</span>
+                    <span class="company-cnpj">CNPJ: 59.717.553/0001-02</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">GSH CORP PARTICIPAÇÕES S.A.</span>
+                    <span class="company-cnpj">CNPJ: 08.397.078/0001-01</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">HAGA S.A. INDÚSTRIA E COMÉRCIO</span>
+                    <span class="company-cnpj">CNPJ: 30.540.991/0001-66</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">HAUSCENTER SA</span>
+                    <span class="company-cnpj">CNPJ: 56.444.250/0001-75</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">IOCHPE MAXION SA</span>
+                    <span class="company-cnpj">CNPJ: 61.156.113/0001-75</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">KALUNGA S.A.</span>
+                    <span class="company-cnpj">CNPJ: 43.283.811/0001-50</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">KEPLER WEBER SA</span>
+                    <span class="company-cnpj">CNPJ: 91.983.056/0001-69</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">LET'S RENT A CAR S.A.</span>
+                    <span class="company-cnpj">CNPJ: 00.873.894/0001-24</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">LIVETECH DA BAHIA INDÚSTRIA E COMÉRCIO S.A.</span>
+                    <span class="company-cnpj">CNPJ: 05.917.486/0001-40</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">LOG-IN LOGISTICA INTERMODAL SA</span>
+                    <span class="company-cnpj">CNPJ: 42.278.291/0001-24</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">LOJAS QUERO QUERO S.A.</span>
+                    <span class="company-cnpj">CNPJ: 96.418.264/0218-02</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">MADERO INDÚSTRIA E COMÉRCIO S.A.</span>
+                    <span class="company-cnpj">CNPJ: 13.783.221/0004-78</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">MANGELS INDUSTRIAL S.A.</span>
+                    <span class="company-cnpj">CNPJ: 61.065.298/0001-02</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">MARCOPOLO SA</span>
+                    <span class="company-cnpj">CNPJ: 88.611.835/0001-29</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">MILLS LOCAÇÃO, SERVIÇOS E LOGÍSTICA S.A.</span>
+                    <span class="company-cnpj">CNPJ: 27.093.558/0001-15</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">MLOG S.A.</span>
+                    <span class="company-cnpj">CNPJ: 13.444.994/0001-87</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">NOVA SOCIEDADE DE NAVEGAÇÃO S.A.</span>
+                    <span class="company-cnpj">CNPJ: 47.586.663/0001-01</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">NOVA TRANSPORTADORA DO SUDESTE S.A. - NTS</span>
+                    <span class="company-cnpj">CNPJ: 04.992.714/0001-84</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">OCEÂNICA ENGENHARIA E CONSULTORIA S.A.</span>
+                    <span class="company-cnpj">CNPJ: 29.980.141/0001-08</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">OSX BRASIL S.A. - EM RECUPERAÇÃO JUDICIAL</span>
+                    <span class="company-cnpj">CNPJ: 09.112.685/0001-32</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">OZN HEALTH SPE S.A.</span>
+                    <span class="company-cnpj">CNPJ: 18.080.368/0001-72</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">PARANAPANEMA S.A. - EM RECUPERAÇÃO JUDICIAL</span>
+                    <span class="company-cnpj">CNPJ: 60.398.369/0004-79</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">PDG REALTY S.A. EMPREEND E PARTICIPACOES</span>
+                    <span class="company-cnpj">CNPJ: 02.950.811/0001-89</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">PLASCAR PARTICIPAÇÕES INDUSTRIAIS S.A</span>
+                    <span class="company-cnpj">CNPJ: 51.928.174/0001-50</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">POLPAR S.A.</span>
+                    <span class="company-cnpj">CNPJ: 59.789.545/0001-71</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">PRÁTICA PRODUTOS S.A.</span>
+                    <span class="company-cnpj">CNPJ: 08.574.411/0001-00</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">QUALICORP CONSULTORIA E CORRETORA DE SEGUROS S.A.</span>
+                    <span class="company-cnpj">CNPJ: 11.992.680/0001-93</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">RENOVA ENERGIA S.A.</span>
+                    <span class="company-cnpj">CNPJ: 08.534.605/0001-74</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">SANEAMENTO DE GOIAS SA</span>
+                    <span class="company-cnpj">CNPJ: 01.616.929/0001-02</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">SANSUY SA INDÚSTRIA  DE PLASTICOS</span>
+                    <span class="company-cnpj">CNPJ: 14.807.945/0001-24</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">SANTOS BRASIL PARTICIPAÇÕES S.A.</span>
+                    <span class="company-cnpj">CNPJ: 02.762.121/0001-04</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">SCHULZ SA</span>
+                    <span class="company-cnpj">CNPJ: 84.693.183/0001-68</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">SENDAS DISTRIBUIDORA S.A.</span>
+                    <span class="company-cnpj">CNPJ: 06.057.223/0001-71</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">SER EDUCACIONAL S.A.</span>
+                    <span class="company-cnpj">CNPJ: 04.986.320/0001-13</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">SUZANO HOLDING S.A.</span>
+                    <span class="company-cnpj">CNPJ: 60.651.809/0001-05</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">SYN PROP & TECH S.A.</span>
+                    <span class="company-cnpj">CNPJ: 08.801.621/0001-86</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">SÃO MARTINHO SA</span>
+                    <span class="company-cnpj">CNPJ: 51.466.860/0001-56</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">TECBLU - TECELAGEM BLUMENAU S/A.</span>
+                    <span class="company-cnpj">CNPJ: 08.424.178/0001-71</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">TEGRA INCORPORADORA S.A.</span>
+                    <span class="company-cnpj">CNPJ: 30.213.493/0001-09</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">TERP GLBL BRASIL I PARTICIPAÇÕES S.A.</span>
+                    <span class="company-cnpj">CNPJ: 21.748.188/0001-20</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">TIGRE S.A. PARTICIPAÇÕES</span>
+                    <span class="company-cnpj">CNPJ: 84.684.455/0001-63</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">TRACK & FIELD CO S.A</span>
+                    <span class="company-cnpj">CNPJ: 59.418.806/0001-47</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">TREVISA  INVESTIMENTOS SA</span>
+                    <span class="company-cnpj">CNPJ: 92.660.570/0001-26</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">UNIFIQUE TELECOMUNICAÇÕES S.A.</span>
+                    <span class="company-cnpj">CNPJ: 02.255.187/0001-08</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">USINAS SID DE MINAS GERAIS S.A.-USIMINAS</span>
+                    <span class="company-cnpj">CNPJ: 60.894.730/0001-05</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">VIX LOGÍSTICA S/A</span>
+                    <span class="company-cnpj">CNPJ: 32.681.371/0001-72</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">VULCABRAS S.A.</span>
+                    <span class="company-cnpj">CNPJ: 50.926.955/0001-42</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">WESTWING COMÉRCIO VAREJISTA S.A.</span>
+                    <span class="company-cnpj">CNPJ: 14.776.142/0001-50</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">WETZEL S.A.</span>
+                    <span class="company-cnpj">CNPJ: 84.683.671/0001-94</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">WTC AMAZONAS SUITE HOTEL S.A.</span>
+                    <span class="company-cnpj">CNPJ: 01.319.044/0001-41</span>
+                </div>
+            
+                <div class="company-item">
+                    <span class="company-name">WTC RIO EMPREEND. E PARTICIPAÇÕES S.A.</span>
+                    <span class="company-cnpj">CNPJ: 01.989.044/0001-59</span>
+                </div>
+            
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <h2>🌾 Agribusiness & Food & Beverage Companies - 2026-10</h2>
+                    <p>This section shows trading activities for agribusiness and food & beverage companies in the latest available month.</p>
+                    <p>Positive values indicate purchases, negative values indicate sales.</p>
+                    
+                </div>
+                
+                <div class="footer">
+                    <p>Report generated by CVM358 Data Extractor</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        
